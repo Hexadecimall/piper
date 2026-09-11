@@ -11,6 +11,7 @@
 #define getpid _getpid
 #define mkdir(path, mode) _mkdir(path)
 #else
+#include <sys/random.h>
 #include <unistd.h>
 extern char **environ;
 #endif
@@ -56,6 +57,46 @@ static PyObject *platform_cpu_count(PyObject *module, PyObject *unused) {
     if (count < 1) Py_RETURN_NONE;
     return PyLong_FromLong(count);
 #endif
+}
+
+static int platform_random_bytes(unsigned char *buffer, Py_ssize_t length) {
+#ifdef _WIN32
+    typedef BOOLEAN (WINAPI *random_fn)(void *, ULONG);
+    static random_fn generate = NULL;
+    if (!generate) {
+        HMODULE library = LoadLibraryA("advapi32.dll");
+        if (library) generate = (random_fn)(void *)GetProcAddress(library, "SystemFunction036");
+    }
+    if (!generate) { errno = EIO; return -1; }
+    while (length > 0) {
+        ULONG amount = length > 0xffffffffLL ? 0xffffffffUL : (ULONG)length;
+        if (!generate(buffer, amount)) { errno = EIO; return -1; }
+        buffer += amount;
+        length -= amount;
+    }
+#else
+    while (length > 0) {
+        size_t amount = length > 256 ? 256 : (size_t)length;
+        if (getentropy(buffer, amount) < 0) return -1;
+        buffer += amount;
+        length -= (Py_ssize_t)amount;
+    }
+#endif
+    return 0;
+}
+
+static PyObject *platform_urandom(PyObject *module, PyObject *size) {
+    PIPER_UNUSED(module);
+    Py_ssize_t length = PyLong_AsSsize_t(size);
+    if (length == -1 && PyErr_Occurred()) return NULL;
+    if (length < 0) { PyErr_SetString(PyExc_ValueError, "negative argument not allowed"); return NULL; }
+    PyObject *result = PyBytes_FromStringAndSize(NULL, length);
+    if (!result) return NULL;
+    if (platform_random_bytes((unsigned char *)PyBytes_AS_STRING(result), length) < 0) {
+        Py_DECREF(result);
+        return PyErr_SetFromErrno(PyExc_OSError);
+    }
+    return result;
 }
 
 static const char *platform_path(PyObject *object) {
@@ -144,6 +185,7 @@ static PyMethodDef platform_methods[] = {
     { "chdir", platform_chdir, METH_O, NULL },
     { "getpid", platform_getpid, METH_NOARGS, NULL },
     { "cpu_count", platform_cpu_count, METH_NOARGS, NULL },
+    { "urandom", platform_urandom, METH_O, NULL },
     { "stat", platform_stat, METH_O, NULL },
     { "unlink", platform_unlink, METH_O, NULL },
     { "remove", platform_unlink, METH_O, NULL },
@@ -164,7 +206,7 @@ void piper_init_platform(void) {
     PyModule_AddFunctions(module, platform_methods);
     PyModule_AddObject(module, "environ", platform_create_environ(module, NULL));
     PyModule_AddObject(module, "_have_functions", PyList_New(0));
-    const char *exports[] = { "environ", "getcwd", "getcwdb", "chdir", "getpid", "cpu_count", "stat", "unlink", "remove", "rmdir", "mkdir", "rename", NULL };
+    const char *exports[] = { "environ", "getcwd", "getcwdb", "chdir", "getpid", "cpu_count", "urandom", "stat", "unlink", "remove", "rmdir", "mkdir", "rename", NULL };
     PyObject *all = PyList_New(0);
     for (int i = 0; exports[i]; i++) {
         PyObject *name = PyUnicode_FromString(exports[i]);

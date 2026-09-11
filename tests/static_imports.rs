@@ -34,6 +34,22 @@ fn local_modules_and_packages_are_embedded() {
 }
 
 #[test]
+fn imports_follow_statically_reachable_functions() {
+    let _guard = compiler_lock();
+    if !piper_llvm::link::AVAILABLE { eprintln!("skipped: no lld"); return; }
+    let base = std::env::temp_dir().join(format!("piper-reachable-imports-{}", std::process::id()));
+    write(base.join("main.py"), "def unused():\n    import unused_dependency\ndef inner():\n    import used_dependency\n    return used_dependency.value\ndef outer():\n    return inner()\nprint(outer())\n");
+    write(base.join("used_dependency.py"), "value = 42\n");
+    write(base.join("unused_dependency.py"), "def nope(\n");
+    let executable = base.join("program");
+    piper::compile_file(&base.join("main.py"), &executable, &Default::default()).unwrap();
+    let output = Command::new(&executable).output().unwrap();
+    assert!(output.status.success(), "{}", String::from_utf8_lossy(&output.stderr));
+    assert_eq!(String::from_utf8_lossy(&output.stdout), "42\n");
+    let _ = std::fs::remove_dir_all(base);
+}
+
+#[test]
 fn circular_import_observes_partially_initialized_module() {
     let _guard = compiler_lock();
     if !piper_llvm::link::AVAILABLE { eprintln!("skipped: no lld"); return; }
@@ -84,13 +100,27 @@ fn bundled_os_uses_the_native_platform_module() {
     let _guard = compiler_lock();
     if !piper_llvm::link::AVAILABLE { eprintln!("skipped: no lld"); return; }
     let base = std::env::temp_dir().join(format!("piper-bundled-os-{}", std::process::id()));
-    write(base.join("main.py"), "import os\nprint(os.path.join('one', 'two'))\nprint(os.getcwd() == os.getcwd(), os.getpid() > 0, os.cpu_count() >= 1)\nprint(bool(os.stat('.')[0]))\n");
+    write(base.join("main.py"), "import os\nprint(os.path.join('one', 'two'))\nprint(os.getcwd() == os.getcwd(), os.getpid() > 0, os.cpu_count() >= 1)\nprint(bool(os.stat('.')[0]))\nprint(len(os.urandom(32)), os.urandom(32) != os.urandom(32))\n");
     let executable = base.join("program");
     piper::compile_file(&base.join("main.py"), &executable, &Default::default()).unwrap();
     std::fs::remove_file(base.join("main.py")).unwrap();
     let output = Command::new(&executable).current_dir(&base).output().unwrap();
     assert!(output.status.success(), "{}", String::from_utf8_lossy(&output.stderr));
-    assert_eq!(String::from_utf8_lossy(&output.stdout), "one/two\nTrue True True\nTrue\n");
+    assert_eq!(String::from_utf8_lossy(&output.stdout), "one/two\nTrue True True\nTrue\n32 True\n");
+    let _ = std::fs::remove_dir_all(base);
+}
+
+#[test]
+fn bundled_random_uses_native_entropy() {
+    let _guard = compiler_lock();
+    if !piper_llvm::link::AVAILABLE { eprintln!("skipped: no lld"); return; }
+    let base = std::env::temp_dir().join(format!("piper-bundled-random-{}", std::process::id()));
+    write(base.join("main.py"), "import random\nvalue = random.choice(['rock', 'paper', 'scissors'])\nprint(value in ('rock', 'paper', 'scissors'))\n");
+    let executable = base.join("program");
+    piper::compile_file(&base.join("main.py"), &executable, &Default::default()).unwrap();
+    let output = Command::new(&executable).output().unwrap();
+    assert!(output.status.success(), "{}", String::from_utf8_lossy(&output.stderr));
+    assert_eq!(String::from_utf8_lossy(&output.stdout), "True\n");
     let _ = std::fs::remove_dir_all(base);
 }
 

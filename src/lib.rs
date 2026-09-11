@@ -96,31 +96,129 @@ pub fn lower_source_named(src: &str, filename: &str, modname: &str) -> Result<Co
 
 struct SourceModule {
     name: String,
+    source: String,
     tree: Mod,
     is_package: bool,
+    bundled: bool,
 }
 
-fn nested_imports(stmts: &[Stmt], out: &mut Vec<(Option<String>, Vec<String>, u32)>) {
+fn called_names_expr(expr: &Expr, out: &mut BTreeSet<String>) {
+    match &expr.kind {
+        ExprKind::Call { func, args, keywords } => {
+            if let ExprKind::Name { id, .. } = &func.kind { out.insert(id.clone()); }
+            called_names_expr(func, out);
+            for arg in args { called_names_expr(arg, out); }
+            for keyword in keywords { called_names_expr(&keyword.value, out); }
+        }
+        ExprKind::BoolOp { values, .. } | ExprKind::JoinedStr { values } | ExprKind::TemplateStr { values }
+        | ExprKind::List { elts: values, .. } | ExprKind::Tuple { elts: values, .. } | ExprKind::Set { elts: values } =>
+            for value in values { called_names_expr(value, out); },
+        ExprKind::NamedExpr { target, value } | ExprKind::BinOp { left: target, right: value, .. }
+        | ExprKind::Subscript { value: target, slice: value, .. } => {
+            called_names_expr(target, out); called_names_expr(value, out);
+        }
+        ExprKind::UnaryOp { operand, .. } | ExprKind::Await { value: operand } | ExprKind::YieldFrom { value: operand }
+        | ExprKind::Attribute { value: operand, .. } | ExprKind::Starred { value: operand, .. } => called_names_expr(operand, out),
+        ExprKind::Lambda { body, .. } => called_names_expr(body, out),
+        ExprKind::IfExp { test, body, orelse } => {
+            called_names_expr(test, out); called_names_expr(body, out); called_names_expr(orelse, out);
+        }
+        ExprKind::Dict { keys, values } => {
+            for key in keys.iter().flatten() { called_names_expr(key, out); }
+            for value in values { called_names_expr(value, out); }
+        }
+        ExprKind::ListComp { elt, generators } | ExprKind::SetComp { elt, generators }
+        | ExprKind::GeneratorExp { elt, generators } => {
+            called_names_expr(elt, out);
+            for generator in generators {
+                called_names_expr(&generator.iter, out);
+                for condition in &generator.ifs { called_names_expr(condition, out); }
+            }
+        }
+        ExprKind::DictComp { key, value, generators } => {
+            called_names_expr(key, out); called_names_expr(value, out);
+            for generator in generators {
+                called_names_expr(&generator.iter, out);
+                for condition in &generator.ifs { called_names_expr(condition, out); }
+            }
+        }
+        ExprKind::Yield { value } => { if let Some(value) = value { called_names_expr(value, out); } }
+        ExprKind::Compare { left, comparators, .. } => {
+            called_names_expr(left, out); for value in comparators { called_names_expr(value, out); }
+        }
+        ExprKind::FormattedValue { value, format_spec, .. } | ExprKind::Interpolation { value, format_spec, .. } => {
+            called_names_expr(value, out); if let Some(spec) = format_spec { called_names_expr(spec, out); }
+        }
+        ExprKind::Slice { lower, upper, step } => {
+            for value in [lower, upper, step].into_iter().flatten() { called_names_expr(value, out); }
+        }
+        ExprKind::Constant { .. } | ExprKind::Name { .. } => {}
+    }
+}
+
+fn reachable_stmt_data(stmts: &[Stmt], imports: &mut Vec<(Option<String>, Vec<String>, u32)>, calls: &mut BTreeSet<String>) {
     for stmt in stmts {
         match &stmt.kind {
-            StmtKind::Import { names } => for alias in names { out.push((Some(alias.name.clone()), Vec::new(), 0)); },
-            StmtKind::ImportFrom { module, names, level } => out.push((module.clone(), names.iter().map(|a| a.name.clone()).collect(), *level)),
-            StmtKind::FunctionDef { body, .. } | StmtKind::AsyncFunctionDef { body, .. } | StmtKind::ClassDef { body, .. }
-            | StmtKind::With { body, .. } | StmtKind::AsyncWith { body, .. } => nested_imports(body, out),
-            StmtKind::If { test, body, orelse } if main_guard(test) => nested_imports(orelse, out),
-            StmtKind::For { body, orelse, .. } | StmtKind::AsyncFor { body, orelse, .. }
-            | StmtKind::While { body, orelse, .. } | StmtKind::If { body, orelse, .. } => {
-                nested_imports(body, out); nested_imports(orelse, out);
+            StmtKind::Import { names } => for alias in names { imports.push((Some(alias.name.clone()), Vec::new(), 0)); },
+            StmtKind::ImportFrom { module, names, level } => imports.push((module.clone(), names.iter().map(|a| a.name.clone()).collect(), *level)),
+            StmtKind::FunctionDef { decorator_list, args, .. } | StmtKind::AsyncFunctionDef { decorator_list, args, .. } => {
+                for value in decorator_list.iter().chain(args.defaults.iter()).chain(args.kw_defaults.iter().flatten()) { called_names_expr(value, calls); }
             }
+            StmtKind::ClassDef { bases, keywords, body, decorator_list, .. } => {
+                for value in bases.iter().chain(decorator_list.iter()) { called_names_expr(value, calls); }
+                for keyword in keywords { called_names_expr(&keyword.value, calls); }
+                reachable_stmt_data(body, imports, calls);
+            }
+            StmtKind::Return { value } => { if let Some(value) = value { called_names_expr(value, calls); } }
+            StmtKind::Delete { targets } => for value in targets { called_names_expr(value, calls); },
+            StmtKind::Assign { targets, value, .. } => { for target in targets { called_names_expr(target, calls); } called_names_expr(value, calls); }
+            StmtKind::TypeAlias { name, value, .. } => { called_names_expr(name, calls); called_names_expr(value, calls); }
+            StmtKind::AugAssign { target, value, .. } => { called_names_expr(target, calls); called_names_expr(value, calls); }
+            StmtKind::AnnAssign { target, annotation, value, .. } => {
+                called_names_expr(target, calls); called_names_expr(annotation, calls); if let Some(value) = value { called_names_expr(value, calls); }
+            }
+            StmtKind::For { target, iter, body, orelse, .. } | StmtKind::AsyncFor { target, iter, body, orelse, .. } => {
+                called_names_expr(target, calls); called_names_expr(iter, calls); reachable_stmt_data(body, imports, calls); reachable_stmt_data(orelse, imports, calls);
+            }
+            StmtKind::While { test, body, orelse } | StmtKind::If { test, body, orelse } => {
+                called_names_expr(test, calls);
+                if main_guard(test) { reachable_stmt_data(orelse, imports, calls); }
+                else { reachable_stmt_data(body, imports, calls); reachable_stmt_data(orelse, imports, calls); }
+            }
+            StmtKind::With { items, body, .. } | StmtKind::AsyncWith { items, body, .. } => {
+                for item in items { called_names_expr(&item.context_expr, calls); }
+                reachable_stmt_data(body, imports, calls);
+            }
+            StmtKind::Match { subject, cases } => { called_names_expr(subject, calls); for case in cases { reachable_stmt_data(&case.body, imports, calls); } }
+            StmtKind::Raise { exc, cause } => for value in [exc, cause].into_iter().flatten() { called_names_expr(value, calls); },
             StmtKind::Try { body, handlers, orelse, finalbody } | StmtKind::TryStar { body, handlers, orelse, finalbody } => {
-                nested_imports(body, out);
-                for handler in handlers { nested_imports(&handler.body, out); }
-                nested_imports(orelse, out); nested_imports(finalbody, out);
+                reachable_stmt_data(body, imports, calls); for handler in handlers { reachable_stmt_data(&handler.body, imports, calls); }
+                reachable_stmt_data(orelse, imports, calls); reachable_stmt_data(finalbody, imports, calls);
             }
-            StmtKind::Match { cases, .. } => for case in cases { nested_imports(&case.body, out); },
+            StmtKind::Assert { test, msg } => { called_names_expr(test, calls); if let Some(msg) = msg { called_names_expr(msg, calls); } }
+            StmtKind::Expr { value } => called_names_expr(value, calls),
+            StmtKind::Global { .. } | StmtKind::Nonlocal { .. } | StmtKind::Pass | StmtKind::Break | StmtKind::Continue => {}
+        }
+    }
+}
+
+fn reachable_imports(stmts: &[Stmt]) -> Vec<(Option<String>, Vec<String>, u32)> {
+    let mut functions = BTreeMap::new();
+    for stmt in stmts {
+        match &stmt.kind {
+            StmtKind::FunctionDef { name, body, .. } | StmtKind::AsyncFunctionDef { name, body, .. } => { functions.insert(name.as_str(), body.as_slice()); }
             _ => {}
         }
     }
+    let mut imports = Vec::new();
+    let mut calls = BTreeSet::new();
+    reachable_stmt_data(stmts, &mut imports, &mut calls);
+    let mut scanned = BTreeSet::new();
+    while let Some(name) = calls.iter().find(|name| !scanned.contains(*name)).cloned() {
+        scanned.insert(name.clone());
+        if let Some(body) = functions.get(name.as_str()) { reachable_stmt_data(body, &mut imports, &mut calls); }
+    }
+    imports
 }
 
 fn main_guard(expr: &Expr) -> bool {
@@ -155,7 +253,7 @@ fn push_module_and_parents(pending: &mut Vec<String>, name: &str) {
 
 fn discover_modules(root: &Path, entry_tree: &Mod, entry_name: &str, entry_is_package: bool) -> Result<Vec<SourceModule>, String> {
     let mut imports = Vec::new();
-    if let Mod::Module { body, .. } = entry_tree { nested_imports(body, &mut imports); }
+    if let Mod::Module { body, .. } = entry_tree { imports = reachable_imports(body); }
     let mut pending = Vec::new();
     for (module, names, level) in imports {
         if let Some(base) = absolute_import(entry_name, entry_is_package, module.as_deref(), level) {
@@ -167,22 +265,22 @@ fn discover_modules(root: &Path, entry_tree: &Mod, entry_name: &str, entry_is_pa
     let mut found = BTreeMap::new();
     while let Some(name) = pending.pop() {
         if !seen.insert(name.clone()) { continue; }
-        let (source, is_package) = if let Some((path, is_package)) = module_source(root, &name) {
-            (std::fs::read_to_string(&path).map_err(|e| format!("can't open module '{name}': {e}"))?, is_package)
+        let (source, is_package, bundled) = if let Some((path, is_package)) = module_source(root, &name) {
+            (std::fs::read_to_string(&path).map_err(|e| format!("can't open module '{name}': {e}"))?, is_package, false)
         } else if let Some((source, is_package)) = piper_bundle::stdlib_source(&name) {
-            (source.to_string(), is_package)
+            (source.to_string(), is_package, true)
         } else { continue };
         let logical_file = if is_package { format!("{}/__init__.py", name.replace('.', "/")) } else { format!("{}.py", name.replace('.', "/")) };
         let tree = piper_syntax::parse_module(&source, &logical_file).map_err(|e| format!("  File \"{logical_file}\", line {}\nSyntaxError: {}", e.lineno, e.msg))?;
         let mut imports = Vec::new();
-        if let Mod::Module { body, .. } = &tree { nested_imports(body, &mut imports); }
+        if let Mod::Module { body, .. } = &tree { imports = reachable_imports(body); }
         for (module, names, level) in imports {
             if let Some(base) = absolute_import(&name, is_package, module.as_deref(), level) {
                 push_module_and_parents(&mut pending, &base);
                 for item in names { if item != "*" { push_module_and_parents(&mut pending, &format!("{base}.{item}")); } }
             }
         }
-        found.insert(name.clone(), SourceModule { name, tree, is_package });
+        found.insert(name.clone(), SourceModule { name, source, tree, is_package, bundled });
     }
     Ok(found.into_values().collect())
 }
@@ -196,6 +294,56 @@ fn lower_parsed(tree: &Mod, filename: &str, modname: &str, config: lower::Module
     let mut cg = Codegen::new(modname);
     lower::lower_module_config(&mut cg, tree, &st, filename, modname, config).map_err(|e| CompileError { msg: e.msg, lineno: e.span.lineno, col: e.span.col_offset })?;
     Ok(cg)
+}
+
+fn object_cache_dir() -> Option<PathBuf> {
+    if std::env::var_os("PIPER_NO_CACHE").is_some() { return None; }
+    if let Some(path) = std::env::var_os("PIPER_CACHE_DIR") { return Some(PathBuf::from(path).join("objects")); }
+    #[cfg(target_os = "macos")]
+    if let Some(home) = std::env::var_os("HOME") { return Some(PathBuf::from(home).join("Library/Caches/piper/objects")); }
+    #[cfg(target_os = "windows")]
+    if let Some(path) = std::env::var_os("LOCALAPPDATA") { return Some(PathBuf::from(path).join("Piper/cache/objects")); }
+    if let Some(path) = std::env::var_os("XDG_CACHE_HOME") { return Some(PathBuf::from(path).join("piper/objects")); }
+    std::env::var_os("HOME").map(|home| PathBuf::from(home).join(".cache/piper/objects"))
+}
+
+fn cache_hash(parts: &[&[u8]]) -> u64 {
+    let mut hash = 0xcbf29ce484222325u64;
+    for part in parts {
+        for byte in *part { hash = (hash ^ *byte as u64).wrapping_mul(0x100000001b3); }
+        hash = (hash ^ 0xff).wrapping_mul(0x100000001b3);
+    }
+    hash
+}
+
+fn opt_name(opt: OptLevel) -> &'static str {
+    match opt { OptLevel::O0 => "O0", OptLevel::O1 => "O1", OptLevel::O2 => "O2", OptLevel::O3 => "O3", OptLevel::Os => "Os", OptLevel::Oz => "Oz" }
+}
+
+fn module_object(module: &SourceModule, target: &Target, opt: OptLevel) -> Result<Vec<u8>, String> {
+    let logical_file = if module.is_package { format!("{}/__init__.py", module.name.replace('.', "/")) } else { format!("{}.py", module.name.replace('.', "/")) };
+    let symbol = init_symbol(&module.name);
+    let key = cache_hash(&[env!("CARGO_PKG_VERSION").as_bytes(), target.triple.as_bytes(), opt_name(opt).as_bytes(), module.name.as_bytes(), module.source.as_bytes()]);
+    let cache = object_cache_dir().map(|directory| directory.join(format!("{key:016x}.o")));
+    if let Some(path) = &cache {
+        if let Ok(object) = std::fs::read(path) { return Ok(object); }
+    }
+    let mut codegen = lower_parsed(&module.tree, &logical_file, &module.name, lower::ModuleConfig {
+        init_symbol: &symbol, emit_main: false, emit_extension: false, is_package: module.is_package, static_modules: &[],
+    }).map_err(|e| format!("  File \"{logical_file}\", line {}\nSyntaxError: {}", e.lineno, e.msg))?;
+    let object = codegen.emit_object(Some(&target.triple), opt).map_err(|e| format!("codegen failed for {}: {e}", module.name))?;
+    if let Some(path) = cache {
+        if let Some(parent) = path.parent() {
+            if std::fs::create_dir_all(parent).is_ok() {
+                let temporary = parent.join(format!(".{key:016x}-{}.tmp", std::process::id()));
+                if std::fs::write(&temporary, &object).is_ok() {
+                    let _ = std::fs::rename(&temporary, &path);
+                }
+                let _ = std::fs::remove_file(temporary);
+            }
+        }
+    }
+    Ok(object)
 }
 
 /// Compile a source file to a native executable at `output`.
@@ -237,12 +385,8 @@ pub fn compile_file(input: &Path, output: &Path, opts: &CompileOptions) -> Resul
     std::fs::write(&obj_path, obj).map_err(|e| e.to_string())?;
     let mut inputs = vec![obj_path];
     for module in &modules {
-        let logical_file = if module.is_package { format!("{}/__init__.py", module.name.replace('.', "/")) } else { format!("{}.py", module.name.replace('.', "/")) };
-        let symbol = init_symbol(&module.name);
-        let mut module_cg = lower_parsed(&module.tree, &logical_file, &module.name, lower::ModuleConfig {
-            init_symbol: &symbol, emit_main: false, emit_extension: false, is_package: module.is_package, static_modules: &[],
-        }).map_err(|e| format!("  File \"{logical_file}\", line {}\nSyntaxError: {}", e.lineno, e.msg))?;
-        let module_obj = module_cg.emit_object(Some(&target.triple), opts.opt).map_err(|e| format!("codegen failed for {}: {e}", module.name))?;
+        let module_opt = if module.bundled { OptLevel::O0 } else { opts.opt };
+        let module_obj = module_object(module, &target, module_opt)?;
         let path = dir.join(format!("module-{}.o", module.name.replace('.', "-")));
         std::fs::write(&path, module_obj).map_err(|e| e.to_string())?;
         inputs.push(path);
