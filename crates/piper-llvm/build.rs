@@ -45,6 +45,9 @@ fn main() {
         for l in &lld_libs { println!("cargo:rustc-link-lib=static={l}"); }
         if std::env::var("PIPER_LLVM_LINK").as_deref() == Ok("dynamic") {
             println!("cargo:rustc-link-lib=dylib=LLVM");
+            if cfg!(any(target_os = "macos", target_os = "linux")) {
+                println!("cargo:rustc-link-arg=-Wl,-rpath,{}", llvm_lib.display());
+            }
         } else {
             for l in &llvm_libs { println!("cargo:rustc-link-lib=static={l}"); }
             for l in &polly_libs { println!("cargo:rustc-link-lib=static={l}"); }
