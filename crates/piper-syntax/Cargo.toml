@@ -1,0 +1,7 @@
+[package]
+name = "piper-syntax"
+version.workspace = true
+edition.workspace = true
+description = "Tokenizer, parser and AST for Python 3.14 plus piper extensions"
+
+[dependencies]

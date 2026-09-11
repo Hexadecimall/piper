@@ -1,0 +1,27 @@
+[workspace]
+resolver = "3"
+members = ["crates/*"]
+
+[workspace.package]
+version = "0.1.0"
+edition = "2024"
+license = "MIT"
+
+[package]
+name = "piper"
+version.workspace = true
+edition.workspace = true
+description = "Python 3.14 implementation with a native compiler and a terminal-first dialect"
+build = "build.rs"
+
+[dependencies]
+piper-syntax = { path = "crates/piper-syntax" }
+piper-llvm = { path = "crates/piper-llvm" }
+piper-rt = { path = "crates/piper-rt" }
+piper-bundle = { path = "crates/piper-bundle" }
+
+[profile.release]
+lto = "fat"
+codegen-units = 1
+panic = "abort"
+strip = true

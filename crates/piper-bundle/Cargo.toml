@@ -1,0 +1,9 @@
+[package]
+name = "piper-bundle"
+version.workspace = true
+edition.workspace = true
+description = "Link inputs for every target, embedded in the compiler"
+build = "build.rs"
+
+[dependencies]
+piper-rt = { path = "../piper-rt" }

@@ -1,0 +1,10 @@
+[package]
+name = "piper-rt"
+version.workspace = true
+edition.workspace = true
+description = "Runtime for compiled piper programs: object model, GC, builtins, C-API"
+build = "build.rs"
+links = "piper_rt"
+
+[build-dependencies]
+cc = "1"

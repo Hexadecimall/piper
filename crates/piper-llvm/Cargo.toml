@@ -1,0 +1,12 @@
+[package]
+name = "piper-llvm"
+version.workspace = true
+edition.workspace = true
+description = "LLVM bindings, IR lowering, JIT and object emission for piper"
+build = "build.rs"
+
+[build-dependencies]
+cc = "1"
+
+[dependencies]
+piper-syntax = { path = "../piper-syntax" }

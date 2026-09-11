@@ -1,0 +1,34 @@
+class Piper < Formula
+  desc "Python 3.14 implementation with a native compiler and terminal-first dialect"
+  homepage "@HOMEPAGE@"
+  version "@VERSION@"
+  license "MIT"
+
+  on_macos do
+    if Hardware::CPU.arm?
+      url "@BASE_URL@/piper-aarch64-macos-static-release"
+      sha256 "@MACOS_ARM64_SHA256@"
+    else
+      url "@BASE_URL@/piper-x86_64-macos-static-release"
+      sha256 "@MACOS_X86_64_SHA256@"
+    end
+  end
+
+  on_linux do
+    depends_on arch: :x86_64
+    url "@BASE_URL@/piper-x86_64-linux-static-release"
+    sha256 "@LINUX_X86_64_SHA256@"
+  end
+
+  def install
+    asset = Dir["piper-*"]
+    odie "Piper release contains no executable" if asset.empty?
+    odie "Piper release contains multiple executables" unless asset.one?
+
+    bin.install asset.first => "piper"
+  end
+
+  test do
+    assert_equal "piper #{version}", shell_output("#{bin}/piper --version").strip
+  end
+end

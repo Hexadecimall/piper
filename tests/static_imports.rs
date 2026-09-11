@@ -1,0 +1,109 @@
+//! Source imports are compiled into the executable instead of being read at runtime.
+
+use std::path::PathBuf;
+use std::process::Command;
+use std::sync::{Mutex, MutexGuard, OnceLock};
+
+fn compiler_lock() -> MutexGuard<'static, ()> {
+    static LOCK: OnceLock<Mutex<()>> = OnceLock::new();
+    LOCK.get_or_init(|| Mutex::new(())).lock().unwrap()
+}
+
+fn write(path: PathBuf, source: &str) {
+    std::fs::create_dir_all(path.parent().unwrap()).unwrap();
+    std::fs::write(path, source).unwrap();
+}
+
+#[test]
+fn local_modules_and_packages_are_embedded() {
+    let _guard = compiler_lock();
+    if !piper_llvm::link::AVAILABLE { eprintln!("skipped: no lld"); return; }
+    let base = std::env::temp_dir().join(format!("piper-static-imports-{}", std::process::id()));
+    let source = base.join("source");
+    write(source.join("main.py"), "import helper\nfrom pack import answer\nfrom pack.sub import doubled\nprint(helper.value, answer, doubled)\n");
+    write(source.join("helper.py"), "value = 7\n");
+    write(source.join("pack/__init__.py"), "from .sub import doubled\nanswer = 21\n");
+    write(source.join("pack/sub.py"), "from helper import value\ndoubled = value * 2\n");
+    let executable = base.join("program");
+    piper::compile_file(&source.join("main.py"), &executable, &Default::default()).unwrap();
+    std::fs::rename(&source, base.join("source-hidden")).unwrap();
+    let output = Command::new(&executable).current_dir(&base).output().unwrap();
+    assert!(output.status.success(), "{}", String::from_utf8_lossy(&output.stderr));
+    assert_eq!(String::from_utf8_lossy(&output.stdout), "7 21 14\n");
+    let _ = std::fs::remove_dir_all(base);
+}
+
+#[test]
+fn circular_import_observes_partially_initialized_module() {
+    let _guard = compiler_lock();
+    if !piper_llvm::link::AVAILABLE { eprintln!("skipped: no lld"); return; }
+    let base = std::env::temp_dir().join(format!("piper-circular-imports-{}", std::process::id()));
+    write(base.join("main.py"), "import left\nimport right\nprint(left.value, right.saw_value)\n");
+    write(base.join("left.py"), "import right\nvalue = 12\n");
+    write(base.join("right.py"), "import left\nsaw_value = hasattr(left, 'value')\n");
+    let executable = base.join("program");
+    piper::compile_file(&base.join("main.py"), &executable, &Default::default()).unwrap();
+    let output = Command::new(&executable).output().unwrap();
+    assert!(output.status.success(), "{}", String::from_utf8_lossy(&output.stderr));
+    assert_eq!(String::from_utf8_lossy(&output.stdout), "12 False\n");
+    let _ = std::fs::remove_dir_all(base);
+}
+
+#[test]
+fn bundled_standard_library_modules_need_no_python_installation() {
+    let _guard = compiler_lock();
+    if !piper_llvm::link::AVAILABLE { eprintln!("skipped: no lld"); return; }
+    let base = std::env::temp_dir().join(format!("piper-bundled-stdlib-{}", std::process::id()));
+    write(base.join("main.py"), "import stat\nimport keyword\nimport colorsys\nimport operator\nimport copyreg\nimport bisect\nimport heapq\nimport types\nimport enum\nimport sys\nclass Color(enum.Enum):\n    RED = 1\n    BLUE = 2\nclass Mode(enum.IntFlag):\n    READ = 1\n    WRITE = 2\nvalues = [1, 3, 5]\nbisect.insort(values, 4)\nheapq.heappush(values, 0)\nprint(stat.S_ISDIR(stat.S_IFDIR), keyword.iskeyword('match'), colorsys.rgb_to_hsv(1.0, 0.0, 0.0))\nprint(operator.add(2, 3), operator.itemgetter(1)((4, 9)), callable(copyreg.pickle))\nprint(values, heapq.heappop(values), bisect.bisect_left(values, 4))\nprint(types.FunctionType.__name__, types.MethodType.__name__, types.NoneType.__name__)\nprint(types.SimpleNamespace(a=1, b=2), sys.implementation.name, sys.implementation.cache_tag)\nprint(Color.RED, Color.RED.name, Color.RED.value, list(Color), Mode.READ | Mode.WRITE)\n");
+    let executable = base.join("program");
+    piper::compile_file(&base.join("main.py"), &executable, &Default::default()).unwrap();
+    std::fs::remove_file(base.join("main.py")).unwrap();
+    let output = Command::new(&executable).current_dir(&base).output().unwrap();
+    assert!(output.status.success(), "{}", String::from_utf8_lossy(&output.stderr));
+    assert_eq!(String::from_utf8_lossy(&output.stdout), "True False (0.0, 1.0, 1.0)\n5 9 True\n[1, 3, 4, 5] 0 2\nfunction method NoneType\nnamespace(a=1, b=2) piper piper-314\nColor.RED RED 1 [<Color.RED: 1>, <Color.BLUE: 2>] 3\n");
+    let _ = std::fs::remove_dir_all(base);
+}
+
+#[test]
+fn bundled_abc_supports_abstract_and_registered_classes() {
+    let _guard = compiler_lock();
+    if !piper_llvm::link::AVAILABLE { eprintln!("skipped: no lld"); return; }
+    let base = std::env::temp_dir().join(format!("piper-bundled-abc-{}", std::process::id()));
+    write(base.join("main.py"), "from abc import ABC, abstractmethod, get_cache_token\nclass Shape(ABC):\n    @abstractmethod\n    def area(self):\n        pass\nclass Square(Shape):\n    def area(self):\n        return 4\nclass External:\n    pass\nbefore = get_cache_token()\nShape.register(External)\nprint(Shape.__abstractmethods__, Square().area())\nprint(issubclass(Square, Shape), isinstance(Square(), Shape))\nprint(issubclass(External, Shape), isinstance(External(), Shape), get_cache_token() > before)\ntry:\n    Shape()\nexcept TypeError as error:\n    print(type(error).__name__)\n");
+    let executable = base.join("program");
+    piper::compile_file(&base.join("main.py"), &executable, &Default::default()).unwrap();
+    std::fs::remove_file(base.join("main.py")).unwrap();
+    let output = Command::new(&executable).current_dir(&base).output().unwrap();
+    assert!(output.status.success(), "{}", String::from_utf8_lossy(&output.stderr));
+    assert_eq!(String::from_utf8_lossy(&output.stdout), "frozenset({'area'}) 4\nTrue True\nTrue True True\nTypeError\n");
+    let _ = std::fs::remove_dir_all(base);
+}
+
+#[test]
+fn bundled_os_uses_the_native_platform_module() {
+    let _guard = compiler_lock();
+    if !piper_llvm::link::AVAILABLE { eprintln!("skipped: no lld"); return; }
+    let base = std::env::temp_dir().join(format!("piper-bundled-os-{}", std::process::id()));
+    write(base.join("main.py"), "import os\nprint(os.path.join('one', 'two'))\nprint(os.getcwd() == os.getcwd(), os.getpid() > 0, os.cpu_count() >= 1)\nprint(bool(os.stat('.')[0]))\n");
+    let executable = base.join("program");
+    piper::compile_file(&base.join("main.py"), &executable, &Default::default()).unwrap();
+    std::fs::remove_file(base.join("main.py")).unwrap();
+    let output = Command::new(&executable).current_dir(&base).output().unwrap();
+    assert!(output.status.success(), "{}", String::from_utf8_lossy(&output.stderr));
+    assert_eq!(String::from_utf8_lossy(&output.stdout), "one/two\nTrue True True\nTrue\n");
+    let _ = std::fs::remove_dir_all(base);
+}
+
+#[test]
+fn bundled_collections_and_iterators_execute() {
+    let _guard = compiler_lock();
+    if !piper_llvm::link::AVAILABLE { eprintln!("skipped: no lld"); return; }
+    let base = std::env::temp_dir().join(format!("piper-bundled-collections-{}", std::process::id()));
+    write(base.join("main.py"), "from collections import Counter, namedtuple\nfrom itertools import chain, islice, pairwise, product\nPoint = namedtuple('Point', 'x y')\nprint(Counter('abac').most_common())\nprint(Point(2, 3), list(chain([1], [2, 3])))\nprint(list(islice(range(10), 2, 8, 2)), list(pairwise([1, 2, 4])))\nprint(list(product('ab', repeat=2)))\n");
+    let executable = base.join("program");
+    piper::compile_file(&base.join("main.py"), &executable, &Default::default()).unwrap();
+    let output = Command::new(&executable).current_dir(&base).output().unwrap();
+    assert!(output.status.success(), "{}", String::from_utf8_lossy(&output.stderr));
+    assert_eq!(String::from_utf8_lossy(&output.stdout), "[('a', 2), ('b', 1), ('c', 1)]\nPoint(x=2, y=3) [1, 2, 3]\n[2, 4, 6] [(1, 2), (2, 4)]\n[('a', 'a'), ('a', 'b'), ('b', 'a'), ('b', 'b')]\n");
+    let _ = std::fs::remove_dir_all(base);
+}
