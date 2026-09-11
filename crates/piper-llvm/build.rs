@@ -49,7 +49,15 @@ fn main() {
         }
         if let Ok(libraries) = std::env::var("PIPER_LLVM_SYSTEM_LIBS") {
             for argument in libraries.split_whitespace() {
-                println!("cargo:rustc-link-arg={argument}");
+                if let Some(library) = argument.strip_prefix("-l") {
+                    println!("cargo:rustc-link-lib={library}");
+                } else if let Some(directory) = argument.strip_prefix("-L") {
+                    println!("cargo:rustc-link-search=native={directory}");
+                } else if argument == "-pthread" {
+                    println!("cargo:rustc-link-lib=pthread");
+                } else {
+                    panic!("unsupported PIPER_LLVM_SYSTEM_LIBS argument: {argument}");
+                }
             }
         }
         if cfg!(target_os = "linux") { println!("cargo:rustc-link-arg=-Wl,--end-group"); }
