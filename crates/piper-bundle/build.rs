@@ -398,6 +398,11 @@ fn cross_sysroot(spec: &Spec) -> Option<PathBuf> {
     let var = format!("PIPER_SYSROOT_{}", spec.dir.to_uppercase().replace('-', "_"));
     if let Ok(v) = std::env::var(&var) { let p = PathBuf::from(v); if p.exists() { return Some(p); } }
     if let Some(p) = search_path_sysroot(spec) { return Some(p); }
+    let target = std::env::var("TARGET").unwrap_or_default();
+    let native_arch = if target.starts_with("aarch64") { "aarch64" } else { "x86_64" };
+    if spec.os == "linux" && spec.libc == "-gnu" && spec.arch == native_arch && target.contains("linux") && !target.contains("musl") {
+        return Some(PathBuf::from("/"));
+    }
     for name in cross_compilers(spec) {
         if let Some(p) = query_path(&name, "-print-sysroot") { return Some(p); }
     }

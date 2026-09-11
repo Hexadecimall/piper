@@ -17,17 +17,30 @@ jobs:
       matrix:
         include:
           - runner: macos-15
-            asset: piper-aarch64-macos-static-release
+            platform: aarch64-macos
           - runner: macos-15-intel
-            asset: piper-x86_64-macos-static-release
+            platform: x86_64-macos
           - runner: ubuntu-24.04
-            asset: piper-x86_64-linux-static-release
+            platform: x86_64-linux
     runs-on: ${{ matrix.runner }}
     steps:
       - uses: actions/checkout@f548e57e544e1ff5a4c46bf1e1b8685f8e4a348a
       - uses: Homebrew/actions/setup-homebrew@3b81d438eda92ee13b5849940d993be027717ecf
       - name: Install build dependencies
-        run: brew install llvm lld
+        run: brew install llvm
+      - name: Build lld libraries
+        run: |
+          brew fetch --build-from-source lld
+          archive="$(brew --cache --build-from-source lld)"
+          mkdir "$RUNNER_TEMP/llvm-source" "$RUNNER_TEMP/lld-build" "$RUNNER_TEMP/lld-prefix"
+          tar -xf "$archive" --strip-components=1 -C "$RUNNER_TEMP/llvm-source"
+          cmake -S "$RUNNER_TEMP/llvm-source/lld" -B "$RUNNER_TEMP/lld-build" \
+            -DLLD_BUILT_STANDALONE=ON \
+            -DLLVM_DIR="$(brew --prefix llvm)/lib/cmake/llvm" \
+            -DCMAKE_BUILD_TYPE=Release \
+            -DCMAKE_INSTALL_PREFIX="$RUNNER_TEMP/lld-prefix"
+          cmake --build "$RUNNER_TEMP/lld-build" --parallel 4
+          cmake --install "$RUNNER_TEMP/lld-build"
       - name: Install Rust source
         run: rustup toolchain install nightly --profile minimal --component rust-src
       - name: Fetch Python 3.14.7 standard library
@@ -38,31 +51,38 @@ jobs:
           echo "3b48dac8fb59f62eaa67ac83c1eb12bda1b7a08406dd286e252c11a66be27f81  $RUNNER_TEMP/python.tar.xz" | shasum -a 256 --check
           mkdir "$RUNNER_TEMP/python"
           tar -xf "$RUNNER_TEMP/python.tar.xz" --strip-components=1 -C "$RUNNER_TEMP/python"
-      - name: Build static Piper
+      - name: Build Piper
         env:
           PIPER_RELEASE_BASE_URL: https://github.com/${{ github.repository }}/releases/download/${{ github.ref_name }}
           PIPER_STDLIB: ${{ runner.temp }}/python/Lib
         run: |
           export PIPER_LLVM_PREFIX="$(brew --prefix llvm)"
-          export PIPER_LLD_PREFIX="$(brew --prefix lld)"
+          export PIPER_LLD_PREFIX="$RUNNER_TEMP/lld-prefix"
           export PIPER_LLVM_SYSTEM_LIBS="$("$PIPER_LLVM_PREFIX/bin/llvm-config" --system-libs --link-static)"
           export RUSTFLAGS="--remap-path-prefix=$HOME/.rustup=rust --remap-path-prefix=$HOME/.cargo=registry --remap-path-prefix=$GITHUB_WORKSPACE=source"
+          export CARGO_TARGET_DIR="$RUNNER_TEMP/piper-static"
           cargo +nightly -Zbuild-std=std,panic_abort build --release --locked
-          cp target/release/piper "${{ matrix.asset }}"
+          cp "$CARGO_TARGET_DIR/release/piper" "piper-${{ matrix.platform }}-static-release"
+          export CARGO_TARGET_DIR="$RUNNER_TEMP/piper-dynamic"
+          export PIPER_LLVM_LINK=dynamic
+          cargo +nightly -Zbuild-std=std,panic_abort build --release --locked
+          cp "$CARGO_TARGET_DIR/release/piper" "piper-${{ matrix.platform }}-dynamic-release"
       - name: Verify release binary
         run: |
-          asset="${{ matrix.asset }}"
-          if strings "$asset" | grep -Eiq '/Users/runner|/home/runner|gideoncox|Eclipser9-20|\.rustup/toolchains|\.cargo/registry'; then
-            echo "release binary contains build-machine residue" >&2
-            exit 1
-          fi
-          "./$asset" --version
-          PIPER_CACHE_DIR="$RUNNER_TEMP/piper-cache" "./$asset" compile tests/programs/hello.py -o "$RUNNER_TEMP/hello"
-          "$RUNNER_TEMP/hello"
+          for linkage in static dynamic; do
+            asset="piper-${{ matrix.platform }}-$linkage-release"
+            if strings "$asset" | grep -Eiq '/Users/runner|/home/runner|gideoncox|Eclipser9-20|\.rustup/toolchains|\.cargo/registry'; then
+              echo "release binary contains build-machine residue" >&2
+              exit 1
+            fi
+            "./$asset" --version
+            PIPER_CACHE_DIR="$RUNNER_TEMP/piper-cache-$linkage" "./$asset" compile tests/programs/hello.py -o "$RUNNER_TEMP/hello-$linkage"
+            "$RUNNER_TEMP/hello-$linkage"
+          done
       - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a
         with:
-          name: ${{ matrix.asset }}
-          path: ${{ matrix.asset }}
+          name: piper-${{ matrix.platform }}-release
+          path: piper-${{ matrix.platform }}-*-release
           if-no-files-found: error
 
   publish:
@@ -72,17 +92,17 @@ jobs:
     steps:
       - uses: actions/download-artifact@484a0b528fb4d7bd804637ccb632e47a0e638317
         with:
-          pattern: piper-*-static-release
+          pattern: piper-*-release
           merge-multiple: true
       - name: Build release manifest
         run: |
           version="${GITHUB_REF_NAME#v}"
           printf '%s\n' "$version" > version.txt
-          sha256sum piper-*-static-release > checksums.txt
+          sha256sum piper-*-release > checksums.txt
       - uses: softprops/action-gh-release@efb35369e0ad2afab669f228072c1b0d510eae64
         with:
           generate_release_notes: true
           files: |
-            piper-*-static-release
+            piper-*-release
             checksums.txt
             version.txt
