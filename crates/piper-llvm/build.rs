@@ -13,6 +13,7 @@ fn main() {
     println!("cargo:rerun-if-env-changed=PIPER_LLVM_PREFIX");
     println!("cargo:rerun-if-env-changed=PIPER_LLD_PREFIX");
     println!("cargo:rerun-if-env-changed=PIPER_LLVM_LINK");
+    println!("cargo:rerun-if-env-changed=PIPER_LLD_LINK");
     println!("cargo:rerun-if-env-changed=PIPER_LLVM_SYSTEM_LIBS");
     println!("cargo:rerun-if-changed=cxx/lld_shim.cpp");
     println!("cargo::rustc-check-cfg=cfg(piper_has_lld)");
@@ -21,9 +22,12 @@ fn main() {
         let llvm_lib = prefix.join("lib");
         let lld_prefix = std::env::var("PIPER_LLD_PREFIX").map(PathBuf::from).unwrap_or_else(|_| prefix.clone());
         let lld_lib = lld_prefix.join("lib");
-        let llvm_libs = archives(&llvm_lib, "LLVM", "PIPER_LLVM_PREFIX/lib");
-        let polly_libs = archives(&llvm_lib, "Polly", "PIPER_LLVM_PREFIX/lib");
-        let lld_libs = archives(&lld_lib, "lld", "PIPER_LLD_PREFIX/lib");
+        let llvm_libs = archives(&llvm_lib, "LLVM", "a", "PIPER_LLVM_PREFIX/lib");
+        let polly_libs = archives(&llvm_lib, "Polly", "a", "PIPER_LLVM_PREFIX/lib");
+        let lld_static = archives(&lld_lib, "lld", "a", "PIPER_LLD_PREFIX/lib");
+        let lld_dynamic = archives(&lld_lib, "lld", dynamic_extension(), "PIPER_LLD_PREFIX/lib");
+        let dynamic_lld = std::env::var("PIPER_LLD_LINK").as_deref() == Ok("dynamic");
+        let lld_libs = if dynamic_lld { &lld_dynamic } else { &lld_static };
         let has_lld = !lld_libs.is_empty();
         if has_lld {
             cc::Build::new()
@@ -42,7 +46,10 @@ fn main() {
         if lld_lib != llvm_lib { println!("cargo:rustc-link-search=native={}", lld_lib.display()); }
         // Static archives: on Linux the group wrapper resolves circular references.
         if cfg!(target_os = "linux") { println!("cargo:rustc-link-arg=-Wl,--start-group"); }
-        for l in &lld_libs { println!("cargo:rustc-link-lib=static={l}"); }
+        for l in lld_libs { println!("cargo:rustc-link-lib={}={l}", if dynamic_lld { "dylib" } else { "static" }); }
+        if dynamic_lld && cfg!(any(target_os = "macos", target_os = "linux")) {
+            println!("cargo:rustc-link-arg=-Wl,-rpath,{}", lld_lib.display());
+        }
         if std::env::var("PIPER_LLVM_LINK").as_deref() == Ok("dynamic") {
             println!("cargo:rustc-link-lib=dylib=LLVM");
             if cfg!(any(target_os = "macos", target_os = "linux")) {
@@ -95,11 +102,16 @@ fn main() {
     }
 }
 
-fn archives(directory: &std::path::Path, prefix: &str, label: &str) -> Vec<String> {
+fn dynamic_extension() -> &'static str {
+    if cfg!(target_os = "macos") { "dylib" } else if cfg!(windows) { "dll" } else { "so" }
+}
+
+fn archives(directory: &std::path::Path, prefix: &str, extension: &str, label: &str) -> Vec<String> {
     let mut libraries = Vec::new();
     for entry in std::fs::read_dir(directory).unwrap_or_else(|_| panic!("{label}")) {
         let name = entry.unwrap().file_name().to_string_lossy().into_owned();
-        if let Some(stem) = name.strip_prefix("lib").and_then(|value| value.strip_suffix(".a")) {
+        let suffix = format!(".{extension}");
+        if let Some(stem) = name.strip_prefix("lib").and_then(|value| value.strip_suffix(&suffix)) {
             if stem.starts_with(prefix) { libraries.push(stem.to_string()); }
         }
     }
