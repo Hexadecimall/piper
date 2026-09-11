@@ -246,7 +246,7 @@ fn build_archive(spec: &Spec, sources: &[PathBuf], runtime_dir: &Path, sysroot: 
     for src in sources {
         let obj = objdir.join(format!("{}.o", src.file_stem().unwrap().to_string_lossy()));
         let mut cmd = Command::new(&clang);
-        cmd.args(["-c", "-O2", "-std=c11", "-fvisibility=default", "-fno-strict-aliasing"])
+        cmd.args(["-c", "-O2", "-std=c11", "-fvisibility=default", "-fno-strict-aliasing", "-ffunction-sections", "-fdata-sections"])
             .args(["-Wall", "-Wno-unused-parameter", "-Wno-unused-function", "-Wno-unused-command-line-argument"])
             .arg("-target").arg(&spec.triple)
             .arg("-Iinclude")

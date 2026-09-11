@@ -91,7 +91,13 @@ pub fn link(req: &LinkRequest) -> Result<(), String> {
             args.extend(["-arch".into(), t.arch.apple_name().into()]);
             args.extend(["-platform_version".into(), "macos".into(), "11.0".into(), "11.0".into()]);
             if req.shared { args.push("-dylib".into()); }
-            args.push("-export_dynamic".into());
+            args.push("-dead_strip".into());
+            if !req.static_libc || req.shared { args.push("-export_dynamic".into()); }
+            else {
+                for symbol in ["_PyLong_FromLong", "_PyModule_AddIntConstant", "_PyModule_Create2", "_PyModuleDef_Init"] {
+                    args.extend(["-exported_symbol".into(), symbol.into()]);
+                }
+            }
             args.extend(["-syslibroot".into(), sdk.path.to_string_lossy().into_owned()]);
             args.extend(["-o".into(), out]);
             for i in &req.inputs { args.push(i.to_string_lossy().into_owned()); }
@@ -105,6 +111,7 @@ pub fn link(req: &LinkRequest) -> Result<(), String> {
             let static_pie = stat && sr.find_lib("rcrt1.o").is_some();
             args.extend(["-o".into(), out]);
             if req.shared { args.push("-shared".into()); }
+            args.push("--gc-sections".into());
             if stat { args.push("-static".into()); }
             if static_pie { args.push("-pie".into()); }
             if !stat {
@@ -137,6 +144,7 @@ pub fn link(req: &LinkRequest) -> Result<(), String> {
             match t.libc {
                 Libc::Msvc => {
                     args.push(format!("/out:{out}"));
+                    args.push("/opt:ref".into());
                     if req.shared { args.push("/dll".into()); } else { args.push("/subsystem:console".into()); }
                     args.push(format!("/machine:{}", if t.arch.llvm_name() == "x86_64" { "x64" } else { "arm64" }));
                     for d in &sr.lib_dirs { args.push(format!("/libpath:{}", d.display())); }
@@ -147,6 +155,7 @@ pub fn link(req: &LinkRequest) -> Result<(), String> {
                     // mingw: GNU-style driver producing a PE.
                     args.extend(["-m".into(), if t.arch.llvm_name() == "x86_64" { "i386pep".into() } else { "arm64pe".into() }]);
                     args.extend(["-o".into(), out]);
+                    args.push("--gc-sections".into());
                     if req.shared { args.push("--dll".into()); }
                     for d in &sr.lib_dirs { args.push(format!("-L{}", d.display())); }
                     let startup = if req.shared { "dllcrt2.o" } else { "crt2.o" };
