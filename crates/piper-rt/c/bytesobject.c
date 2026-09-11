@@ -366,6 +366,48 @@ static PyObject *bytes_count(PyObject *o, PyObject *const *a, Py_ssize_t n) {
 }
 static PyObject *bytes_upper(PyObject *o, PyObject *u) { PIPER_UNUSED(u); PyObject *r = PyBytes_FromStringAndSize(PyBytes_AS_STRING(o), Py_SIZE(o)); for (Py_ssize_t i = 0; i < Py_SIZE(r); i++) { char *c = &PyBytes_AS_STRING(r)[i]; if (*c >= 'a' && *c <= 'z') *c -= 32; } return r; }
 static PyObject *bytes_lower(PyObject *o, PyObject *u) { PIPER_UNUSED(u); PyObject *r = PyBytes_FromStringAndSize(PyBytes_AS_STRING(o), Py_SIZE(o)); for (Py_ssize_t i = 0; i < Py_SIZE(r); i++) { char *c = &PyBytes_AS_STRING(r)[i]; if (*c >= 'A' && *c <= 'Z') *c += 32; } return r; }
+static PyObject *bytes_maketrans(PyObject *unused, PyObject *const *a, Py_ssize_t n) {
+    PIPER_UNUSED(unused);
+    if (n != 2) { PyErr_SetString(PyExc_TypeError, "maketrans expected 2 arguments"); return NULL; }
+    Py_buffer from, to;
+    if (PyObject_GetBuffer(a[0], &from, PyBUF_SIMPLE) < 0) return NULL;
+    if (PyObject_GetBuffer(a[1], &to, PyBUF_SIMPLE) < 0) { PyBuffer_Release(&from); return NULL; }
+    if (from.len != to.len) { PyBuffer_Release(&from); PyBuffer_Release(&to); PyErr_SetString(PyExc_ValueError, "maketrans arguments must have same length"); return NULL; }
+    PyObject *result = PyBytes_FromStringAndSize(NULL, 256);
+    if (result) {
+        unsigned char *table = (unsigned char *)PyBytes_AS_STRING(result);
+        for (int i = 0; i < 256; i++) table[i] = (unsigned char)i;
+        for (Py_ssize_t i = 0; i < from.len; i++) table[((unsigned char *)from.buf)[i]] = ((unsigned char *)to.buf)[i];
+    }
+    PyBuffer_Release(&from); PyBuffer_Release(&to);
+    return result;
+}
+static PyObject *bytes_translate(PyObject *o, PyObject *const *a, Py_ssize_t n) {
+    if (n < 1 || n > 2) { PyErr_SetString(PyExc_TypeError, "translate expected 1 or 2 arguments"); return NULL; }
+    const unsigned char *table = NULL;
+    Py_buffer view;
+    if (a[0] != Py_None) {
+        if (PyObject_GetBuffer(a[0], &view, PyBUF_SIMPLE) < 0) return NULL;
+        if (view.len != 256) { PyBuffer_Release(&view); PyErr_SetString(PyExc_ValueError, "translation table must be 256 characters long"); return NULL; }
+        table = (const unsigned char *)view.buf;
+    }
+    const unsigned char *deletions = NULL; Py_ssize_t deletion_count = 0; Py_buffer deleted;
+    if (n == 2) {
+        if (PyObject_GetBuffer(a[1], &deleted, PyBUF_SIMPLE) < 0) { if (table) PyBuffer_Release(&view); return NULL; }
+        deletions = (const unsigned char *)deleted.buf; deletion_count = deleted.len;
+    }
+    PyObject *result = PyBytes_FromStringAndSize(NULL, Py_SIZE(o));
+    Py_ssize_t output = 0;
+    if (result) for (Py_ssize_t i = 0; i < Py_SIZE(o); i++) {
+        unsigned char value = (unsigned char)PyBytes_AS_STRING(o)[i]; int remove = 0;
+        for (Py_ssize_t j = 0; j < deletion_count; j++) if (deletions[j] == value) { remove = 1; break; }
+        if (!remove) PyBytes_AS_STRING(result)[output++] = (char)(table ? table[value] : value);
+    }
+    if (table) PyBuffer_Release(&view); if (n == 2) PyBuffer_Release(&deleted);
+    if (!result) return NULL;
+    if (output == Py_SIZE(result)) return result;
+    PyObject *shortened = PyBytes_FromStringAndSize(PyBytes_AS_STRING(result), output); Py_DECREF(result); return shortened;
+}
 static PyObject *bytes_isdigit(PyObject *o, PyObject *u) { PIPER_UNUSED(u); if (!Py_SIZE(o)) Py_RETURN_FALSE; for (Py_ssize_t i = 0; i < Py_SIZE(o); i++) { char c = PyBytes_AS_STRING(o)[i]; if (c < '0' || c > '9') Py_RETURN_FALSE; } Py_RETURN_TRUE; }
 static PyObject *bytes_isalpha(PyObject *o, PyObject *u) { PIPER_UNUSED(u); if (!Py_SIZE(o)) Py_RETURN_FALSE; for (Py_ssize_t i = 0; i < Py_SIZE(o); i++) { char c = (char)(PyBytes_AS_STRING(o)[i] | 32); if (c < 'a' || c > 'z') Py_RETURN_FALSE; } Py_RETURN_TRUE; }
 static PyObject *bytes_isspace(PyObject *o, PyObject *u) { PIPER_UNUSED(u); if (!Py_SIZE(o)) Py_RETURN_FALSE; for (Py_ssize_t i = 0; i < Py_SIZE(o); i++) { char c = PyBytes_AS_STRING(o)[i]; if (!(c == ' ' || (c >= 9 && c <= 13))) Py_RETURN_FALSE; } Py_RETURN_TRUE; }
@@ -398,6 +440,8 @@ static PyMethodDef bytes_methods[] = {
     { "split", (PyCFunction)(void (*)(void))bytes_split, METH_FASTCALL | METH_KEYWORDS, NULL },
     { "replace", (PyCFunction)(void (*)(void))bytes_replace, METH_FASTCALL, NULL },
     { "count", (PyCFunction)(void (*)(void))bytes_count, METH_FASTCALL, NULL },
+    { "maketrans", (PyCFunction)(void (*)(void))bytes_maketrans, METH_FASTCALL | METH_STATIC, NULL },
+    { "translate", (PyCFunction)(void (*)(void))bytes_translate, METH_FASTCALL, NULL },
     { "upper", bytes_upper, METH_NOARGS, NULL }, { "lower", bytes_lower, METH_NOARGS, NULL },
     { "isdigit", bytes_isdigit, METH_NOARGS, NULL }, { "isalpha", bytes_isalpha, METH_NOARGS, NULL }, { "isspace", bytes_isspace, METH_NOARGS, NULL },
     { "__getnewargs__", bytes_getnewargs, METH_NOARGS, NULL },

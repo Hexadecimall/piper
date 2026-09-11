@@ -182,3 +182,17 @@ fn handled_exceptions_leave_no_stale_context() {
     assert!(!stderr.contains("During handling"), "{stderr}");
     let _ = std::fs::remove_dir_all(base);
 }
+
+#[test]
+fn bundled_binary_csv_and_weakref_modules_execute() {
+    let _guard = compiler_lock();
+    if !piper_llvm::link::AVAILABLE { eprintln!("skipped: no lld"); return; }
+    let base = std::env::temp_dir().join(format!("piper-binary-library-{}", std::process::id()));
+    write(base.join("main.py"), "import base64\nimport binascii\nimport csv\nimport io\nimport struct\nimport weakref\nprint(struct.pack('>H2B4s', 0x1234, 5, 6, b'ab'), struct.unpack('>H2B4s', b'\\x12\\x34\\x05\\x06ab\\0\\0'))\nbuffer = bytearray(6)\nstruct.pack_into('<IH', buffer, 0, 0x12345678, 0x9abc)\nprint(struct.unpack_from('<IH', buffer), list(struct.iter_unpack('>H', b'\\0\\1\\0\\2')))\nprint(base64.b64encode(b'piper'), base64.b64decode(b'cGlwZXI='))\nprint(binascii.hexlify(b'abc'), binascii.unhexlify(b'616263'), hex(binascii.crc32(b'abc')))\nprint(b'abc'.translate(bytes.maketrans(b'ac', b'xz')))\nprint(list(csv.reader(['a,\"b,c\"\\n', '1,2\\n'])))\nstream = io.StringIO()\nwriter = csv.writer(stream)\nwriter.writerow(['a', 'b,c'])\nprint(repr(stream.getvalue()))\nclass Ref(weakref.ref):\n    pass\nclass Value:\n    pass\nvalue = Value()\nprint(Ref(value)() is value)\n");
+    let executable = base.join("program");
+    piper::compile_file(&base.join("main.py"), &executable, &Default::default()).unwrap();
+    let output = Command::new(&executable).output().unwrap();
+    assert!(output.status.success(), "{}", String::from_utf8_lossy(&output.stderr));
+    assert_eq!(String::from_utf8_lossy(&output.stdout), "b'\\x124\\x05\\x06ab\\x00\\x00' (4660, 5, 6, b'ab\\x00\\x00')\n(305419896, 39612) [(1,), (2,)]\nb'cGlwZXI=' b'piper'\nb'616263' b'abc' 0x352441c2\nb'xbz'\n[['a', 'b,c'], ['1', '2']]\n'a,\"b,c\"\\r\\n'\nTrue\n");
+    let _ = std::fs::remove_dir_all(base);
+}

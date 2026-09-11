@@ -55,18 +55,7 @@ static PyObject *weakref_repr(PyObject *self) {
     return PyUnicode_FromFormat("<weakref at %p; to '%s' at %p>", self, Py_TYPE(ref->wr_object)->tp_name, ref->wr_object);
 }
 
-PyTypeObject _PyWeakref_RefType = {
-    PyVarObject_HEAD_INIT(&PyType_Type, 0)
-    .tp_name = "weakref.ReferenceType",
-    .tp_basicsize = sizeof(PyWeakReference),
-    .tp_dealloc = weakref_dealloc,
-    .tp_repr = weakref_repr,
-    .tp_hash = weakref_hash,
-    .tp_call = weakref_call,
-    .tp_flags = Py_TPFLAGS_DEFAULT,
-};
-
-PyObject *PyWeakref_NewRef(PyObject *object, PyObject *callback) {
+static PyObject *weakref_new_for_type(PyTypeObject *type, PyObject *object, PyObject *callback) {
     PyObject **head = weaklist_slot(object);
     if (!head) {
         PyErr_Format(PyExc_TypeError, "cannot create weak reference to '%s' object", Py_TYPE(object)->tp_name);
@@ -77,7 +66,7 @@ PyObject *PyWeakref_NewRef(PyObject *object, PyObject *callback) {
         PyErr_SetString(PyExc_TypeError, "callback must be callable");
         return NULL;
     }
-    PyWeakReference *ref = PyObject_New(PyWeakReference, &_PyWeakref_RefType);
+    PyWeakReference *ref = (PyWeakReference *)type->tp_alloc(type, 0);
     if (!ref) return NULL;
     ref->wr_object = object;
     ref->wr_callback = Py_XNewRef(callback);
@@ -90,8 +79,39 @@ PyObject *PyWeakref_NewRef(PyObject *object, PyObject *callback) {
     return (PyObject *)ref;
 }
 
+static PyObject *weakref_new(PyTypeObject *type, PyObject *args, PyObject *kwargs) {
+    PyObject *object = NULL, *callback = Py_None;
+    if (PyTuple_GET_SIZE(args) > 0) object = PyTuple_GET_ITEM(args, 0);
+    if (PyTuple_GET_SIZE(args) > 1) callback = PyTuple_GET_ITEM(args, 1);
+    if (kwargs) {
+        PyObject *value;
+        if ((value = PyDict_GetItemString(kwargs, "object"))) object = value;
+        if ((value = PyDict_GetItemString(kwargs, "callback"))) callback = value;
+    }
+    if (!object || PyTuple_GET_SIZE(args) > 2) { PyErr_SetString(PyExc_TypeError, "ref() takes at most 2 arguments"); return NULL; }
+    return weakref_new_for_type(type, object, callback);
+}
+
+PyTypeObject _PyWeakref_RefType = {
+    PyVarObject_HEAD_INIT(&PyType_Type, 0)
+    .tp_name = "weakref.ReferenceType",
+    .tp_basicsize = sizeof(PyWeakReference),
+    .tp_dealloc = weakref_dealloc,
+    .tp_repr = weakref_repr,
+    .tp_hash = weakref_hash,
+    .tp_call = weakref_call,
+    .tp_flags = Py_TPFLAGS_DEFAULT | Py_TPFLAGS_BASETYPE,
+    .tp_alloc = PyType_GenericAlloc,
+    .tp_new = weakref_new,
+    .tp_free = PyObject_Free,
+};
+
+PyObject *PyWeakref_NewRef(PyObject *object, PyObject *callback) {
+    return weakref_new_for_type(&_PyWeakref_RefType, object, callback);
+}
+
 int PyWeakref_GetRef(PyObject *reference, PyObject **object) {
-    if (!reference || !Py_IS_TYPE(reference, &_PyWeakref_RefType)) {
+    if (!reference || !PyObject_TypeCheck(reference, &_PyWeakref_RefType)) {
         PyErr_SetString(PyExc_TypeError, "expected a weak reference");
         if (object) *object = NULL;
         return -1;
@@ -103,7 +123,7 @@ int PyWeakref_GetRef(PyObject *reference, PyObject **object) {
 }
 
 PyObject *PyWeakref_GetObject(PyObject *reference) {
-    if (!reference || !Py_IS_TYPE(reference, &_PyWeakref_RefType)) {
+    if (!reference || !PyObject_TypeCheck(reference, &_PyWeakref_RefType)) {
         PyErr_SetString(PyExc_TypeError, "expected a weak reference");
         return NULL;
     }
