@@ -31,11 +31,12 @@ pub struct ModuleConfig<'a> {
     pub emit_extension: bool,
     pub is_package: bool,
     pub static_modules: &'a [(String, String)],
+    pub specialize_core: bool,
 }
 
 /// Lower a parsed module into `cg`. Emits `piper_module_init` and `main`.
 pub fn lower_module(cg: &mut Codegen, m: &Mod, st: &SymbolTable, filename: &str, modname: &str) -> LResult<()> {
-    lower_module_config(cg, m, st, filename, modname, ModuleConfig { init_symbol: "piper_module_init", emit_main: true, emit_extension: false, is_package: false, static_modules: &[] })
+    lower_module_config(cg, m, st, filename, modname, ModuleConfig { init_symbol: "piper_module_init", emit_main: true, emit_extension: false, is_package: false, static_modules: &[], specialize_core: false })
 }
 
 pub fn lower_module_config(cg: &mut Codegen, m: &Mod, st: &SymbolTable, filename: &str, modname: &str, config: ModuleConfig<'_>) -> LResult<()> {
@@ -136,11 +137,13 @@ pub struct Lower<'a> {
     emit_extension: bool,
     is_package: bool,
     static_modules: Vec<(String, String)>,
+    specialize_core: bool,
 }
 
 /// Runtime function signatures: (return, params). `P` = ptr, `I` = i32, `L` = i64, `V` = void, `D` = double.
 const RT: &[(&str, &str, &str)] = &[
-    ("piper_initialize", "V", ""), ("piper_main", "I", "IPP"), ("piper_builtins", "P", ""), ("PyImport_AddModule", "P", "P"),
+    ("piper_initialize", "V", ""), ("piper_main", "I", "IPP"), ("piper_main_core", "I", "IPP"), ("piper_builtins", "P", ""), ("PyImport_AddModule", "P", "P"),
+    ("piper_builtin_print", "P", "PLP"), ("piper_builtin_input", "P", "PL"),
     ("PyModule_GetDict", "P", "P"), ("PyDict_SetItemString", "I", "PPP"), ("piper_str_const", "P", "PL"), ("piper_int_const", "P", "P"),
     ("piper_float_const", "P", "D"), ("piper_complex_const", "P", "DD"), ("piper_bytes_const", "P", "PL"), ("piper_bool", "P", "I"),
     ("piper_none", "P", ""), ("piper_ellipsis", "P", ""), ("piper_tuple_const", "P", "PL"), ("piper_intern", "P", "P"),
@@ -201,7 +204,7 @@ impl<'a> Lower<'a> {
                 void_t: LLVMVoidTypeInContext(ctx), f64_t: LLVMDoubleTypeInContext(ctx),
                 fns: HashMap::new(), consts: Vec::new(), const_cache: HashMap::new(), globals_var, builtins_var, fstack: Vec::new(), fn_counter: 0,
                 file_str: std::ptr::null_mut(), init_symbol: config.init_symbol.into(), emit_main: config.emit_main, emit_extension: config.emit_extension,
-                is_package: config.is_package, static_modules: config.static_modules.to_vec(),
+                is_package: config.is_package, static_modules: config.static_modules.to_vec(), specialize_core: config.specialize_core,
             };
             l.file_str = l.cstring_global(filename);
             l
@@ -626,7 +629,8 @@ impl<'a> Lower<'a> {
                 LLVMPositionBuilderAtEnd(self.b(), mbb);
                 let argc = LLVMGetParam(mainf, 0);
                 let argv = LLVMGetParam(mainf, 1);
-                let r = self.call("piper_main", &[argc, argv, init]);
+                let entry = if self.specialize_core { "piper_main_core" } else { "piper_main" };
+                let r = self.call(entry, &[argc, argv, init]);
                 LLVMBuildRet(self.b(), r);
             }
         }
@@ -1706,6 +1710,31 @@ impl<'a> Lower<'a> {
 
     fn call_expr(&mut self, func: &Expr, args: &[Expr], keywords: &[Keyword], span: Span) -> LResult<ValueRef> {
         let has_star = args.iter().any(|a| matches!(a.kind, ExprKind::Starred { .. })) || keywords.iter().any(|k| k.arg.is_none());
+        if self.specialize_core && !has_star {
+            if let ExprKind::Name { id, .. } = &func.kind {
+                if self.scope().resolution(id) == Resolution::GlobalImplicit && (id == "print" || id == "input") {
+                    let mut values = Vec::new();
+                    for argument in args { values.push(self.expr(argument)?); }
+                    for keyword in keywords { values.push(self.expr(&keyword.value)?); }
+                    let array = self.ptr_array(&values);
+                    let count = self.i64c(args.len() as i64);
+                    let result = if id == "print" {
+                        let names = if keywords.is_empty() { self.null() } else {
+                            let names: Vec<String> = keywords.iter().map(|keyword| keyword.arg.clone().unwrap()).collect();
+                            self.names_tuple(&names)
+                        };
+                        self.call("piper_builtin_print", &[array, count, names])
+                    } else if keywords.is_empty() {
+                        self.call("piper_builtin_input", &[array, count])
+                    } else {
+                        return err("input() takes no keyword arguments", span);
+                    };
+                    for value in values { self.decref(value); }
+                    self.check_null(result);
+                    return Ok(result);
+                }
+            }
+        }
         // callable, with the method fast path
         let (callable, self_slot) = match &func.kind {
             ExprKind::Attribute { value, attr, .. } if !has_star => {

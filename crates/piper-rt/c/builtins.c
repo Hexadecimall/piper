@@ -34,6 +34,10 @@ static PyObject *b_print(PyObject *m, PyObject *const *args, Py_ssize_t nargs, P
     Py_RETURN_NONE;
 }
 
+PyObject *piper_builtin_print(PyObject *const *args, Py_ssize_t nargs, PyObject *kwnames) {
+    return b_print(NULL, args, nargs, kwnames);
+}
+
 /* ---- simple builtins ------------------------------------------------------- */
 
 static PyObject *b_repr(PyObject *m, PyObject *o) { PIPER_UNUSED(m); return PyObject_Repr(o); }
@@ -213,6 +217,10 @@ static PyObject *b_input(PyObject *m, PyObject *const *a, Py_ssize_t n) {
     if (l && buf[l - 1] == '\n') buf[--l] = 0;
     return PyUnicode_FromStringAndSize(buf, (Py_ssize_t)l);
 }
+
+PyObject *piper_builtin_input(PyObject *const *args, Py_ssize_t nargs) {
+    return b_input(NULL, args, nargs);
+}
 static PyObject *b_open(PyObject *m, PyObject *const *a, Py_ssize_t n, PyObject *kw) { PIPER_UNUSED(m); return piper_open_impl(a, n, kw); }
 static PyObject *b_import(PyObject *m, PyObject *const *a, Py_ssize_t n, PyObject *kw) {
     PIPER_UNUSED(m);
@@ -272,12 +280,23 @@ static PyMethodDef builtin_methods[] = {
 
 extern PyTypeObject PyGenericAlias_Type, PyUnion_Type;
 
-void piper_init_builtins(void) {
+void piper_init_builtins_core(void) {
+    if (builtins_dict) return;
     PyObject *m = piper_new_stdlib_module("builtins");
     builtins_dict = PyModule_GetDict(m);
-    PyModule_AddFunctions(m, builtin_methods);
     struct { const char *name; PyObject *o; } consts[] = {
         { "None", Py_None }, { "True", Py_True }, { "False", Py_False }, { "NotImplemented", Py_NotImplemented }, { "Ellipsis", Py_Ellipsis },
+        { NULL, NULL },
+    };
+    for (int i = 0; consts[i].name; i++) PyDict_SetItemString(builtins_dict, consts[i].name, consts[i].o);
+    PyDict_SetItemString(builtins_dict, "__debug__", Py_True);
+    PyDict_SetItemString(builtins_dict, "__name__", piper_intern("builtins"));
+}
+
+void piper_init_builtins(void) {
+    piper_init_builtins_core();
+    PyObject *m = PyDict_GetItemString(piper_modules_dict(), "builtins");
+    struct { const char *name; PyObject *o; } consts[] = {
         { "object", (PyObject *)&PyBaseObject_Type }, { "type", (PyObject *)&PyType_Type }, { "int", (PyObject *)&PyLong_Type }, { "bool", (PyObject *)&PyBool_Type },
         { "float", (PyObject *)&PyFloat_Type }, { "complex", (PyObject *)&PyComplex_Type }, { "str", (PyObject *)&PyUnicode_Type }, { "bytes", (PyObject *)&PyBytes_Type },
         { "bytearray", (PyObject *)&PyByteArray_Type }, { "memoryview", (PyObject *)&PyMemoryView_Type }, { "list", (PyObject *)&PyList_Type }, { "tuple", (PyObject *)&PyTuple_Type },
@@ -288,6 +307,7 @@ void piper_init_builtins(void) {
         { NULL, NULL },
     };
     for (int i = 0; consts[i].name; i++) PyDict_SetItemString(builtins_dict, consts[i].name, consts[i].o);
+    PyModule_AddFunctions(m, builtin_methods);
     const char *excs[] = { "BaseException", "BaseExceptionGroup", "ExceptionGroup", "Exception", "TypeError", "StopIteration", "StopAsyncIteration", "GeneratorExit", "KeyboardInterrupt", "SystemExit",
         "ArithmeticError", "OverflowError", "ZeroDivisionError", "FloatingPointError", "AssertionError", "LookupError", "IndexError", "KeyError", "ValueError", "UnicodeError",
         "UnicodeDecodeError", "UnicodeEncodeError", "UnicodeTranslateError", "RuntimeError", "RecursionError", "NotImplementedError", "PythonFinalizationError", "MemoryError", "SystemError",
@@ -299,8 +319,6 @@ void piper_init_builtins(void) {
     for (int i = 0; excs[i]; i++) { PyObject *e = piper_exc_type(excs[i]); if (e) PyDict_SetItemString(builtins_dict, excs[i], e); }
     PyDict_SetItemString(builtins_dict, "EnvironmentError", PyExc_OSError);
     PyDict_SetItemString(builtins_dict, "IOError", PyExc_OSError);
-    PyDict_SetItemString(builtins_dict, "__debug__", Py_True);
-    PyDict_SetItemString(builtins_dict, "__name__", piper_intern("builtins"));
 }
 
 PyObject *piper_debug_true(void) { return Py_True; }

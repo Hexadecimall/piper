@@ -651,14 +651,30 @@ static PyObject **all_exc[] = {
     &PyExc_UnicodeWarning, &PyExc_BytesWarning, &PyExc_ResourceWarning, &PyExc_EncodingWarning, &PyExc_BaseExceptionGroup, &PyExc_ExceptionGroup,
 };
 
-void piper_init_exceptions(void) {
-    for (size_t i = 0; i < sizeof(all_exc) / sizeof(all_exc[0]); i++) {
-        PyTypeObject *t = (PyTypeObject *)*all_exc[i];
+static void ready_exception(PyTypeObject *t) {
         if (!t->tp_alloc) t->tp_alloc = PyType_GenericAlloc;
         if (!t->tp_free) t->tp_free = PyObject_Free;
         if (!t->tp_getattro) t->tp_getattro = PyObject_GenericGetAttr;
         if (!t->tp_setattro) t->tp_setattro = PyObject_GenericSetAttr;
         PyType_Ready(t);
+}
+
+void piper_init_exceptions_core(void) {
+    static int ready;
+    if (ready) return;
+    ready = 1;
+    PyObject **core[] = { &PyExc_BaseException, &PyExc_Exception, &PyExc_TypeError,
+        &PyExc_RuntimeError, &PyExc_MemoryError, &PyExc_SystemError, &PyExc_EOFError,
+        &PyExc_OSError, &PyExc_AttributeError, &PyExc_UnicodeError,
+        &PyExc_UnicodeEncodeError };
+    for (size_t i = 0; i < sizeof(core) / sizeof(core[0]); i++)
+        ready_exception((PyTypeObject *)*core[i]);
+}
+
+void piper_init_exceptions(void) {
+    piper_init_exceptions_core();
+    for (size_t i = 0; i < sizeof(all_exc) / sizeof(all_exc[0]); i++) {
+        ready_exception((PyTypeObject *)*all_exc[i]);
     }
 }
 

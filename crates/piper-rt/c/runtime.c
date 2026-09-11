@@ -294,10 +294,10 @@ static void init_search_path(PyObject *path, const char *executable) {
     append_search_paths(path, getenv("PYTHONPATH"));
 }
 
-void piper_init_sys(int argc, char **argv) {
+void piper_init_sys_core(int argc, char **argv) {
+    if (sys_module) return;
     sys_module = piper_new_stdlib_module("sys");
     PyObject *d = PyModule_GetDict(sys_module);
-    PyModule_AddFunctions(sys_module, sys_methods);
     PyObject *argv_list = PyList_New(0);
     for (int i = 0; i < argc; i++) { PyObject *s = PyUnicode_DecodeFSDefault(argv[i]); PyList_Append(argv_list, s); Py_DECREF(s); }
     PyDict_SetItemString(d, "argv", argv_list); Py_DECREF(argv_list);
@@ -306,6 +306,13 @@ void piper_init_sys(int argc, char **argv) {
     PyDict_SetItemString(d, "stdout", so); PyDict_SetItemString(d, "__stdout__", so); Py_DECREF(so);
     PyDict_SetItemString(d, "stderr", se); PyDict_SetItemString(d, "__stderr__", se); Py_DECREF(se);
     PyDict_SetItemString(d, "stdin", si); PyDict_SetItemString(d, "__stdin__", si); Py_DECREF(si);
+    PyDict_SetItemString(d, "modules", piper_modules_dict());
+}
+
+void piper_init_sys(int argc, char **argv) {
+    piper_init_sys_core(argc, argv);
+    PyObject *d = PyModule_GetDict(sys_module);
+    PyModule_AddFunctions(sys_module, sys_methods);
     PyObject *v;
     v = PyUnicode_FromString("3.14.7 (piper)"); PyDict_SetItemString(d, "version", v); Py_DECREF(v);
     v = PyLong_FromLong(0x030E07F0); PyDict_SetItemString(d, "hexversion", v); Py_DECREF(v);
@@ -350,7 +357,6 @@ void piper_init_sys(int argc, char **argv) {
     v = PyLong_FromSsize_t(PY_SSIZE_T_MAX); PyDict_SetItemString(d, "maxsize", v); Py_DECREF(v);
     v = PyLong_FromLong(0x10ffff); PyDict_SetItemString(d, "maxunicode", v); Py_DECREF(v);
     v = PyList_New(0); init_search_path(v, argc > 0 ? argv[0] : NULL); PyDict_SetItemString(d, "path", v); Py_DECREF(v);
-    PyDict_SetItemString(d, "modules", piper_modules_dict());
     v = PyTuple_New(3);
     PyTuple_SET_ITEM(v, 0, PyUnicode_FromString("builtins"));
     PyTuple_SET_ITEM(v, 1, PyUnicode_FromString("sys"));
@@ -380,7 +386,27 @@ void piper_set_argv(int argc, char **argv) { if (sys_module) { PyObject *l = PyL
 
 /* ---- initialization ----------------------------------------------------------- */
 
+static void ready_type(PyTypeObject *t) {
+    if (!t->tp_alloc) t->tp_alloc = PyType_GenericAlloc;
+    if (!t->tp_free) t->tp_free = PyObject_Free;
+    if (!t->tp_getattro && !t->tp_getattr) t->tp_getattro = PyObject_GenericGetAttr;
+    PyType_Ready(t);
+}
+
+void piper_init_types_core(void) {
+    static int ready;
+    if (ready) return;
+    ready = 1;
+    PyTypeObject *types[] = { &PyBaseObject_Type, &PyType_Type, &_PyNone_Type,
+        &_PyNotImplemented_Type, &PyEllipsis_Type, &PyLong_Type, &PyBool_Type,
+        &PyUnicode_Type, &PyTuple_Type, &PyList_Type, &PyDict_Type,
+        &PyModule_Type, &PyModuleDef_Type, &PyTraceBack_Type, &PyFrame_Type,
+        &PyPiperFile_Type };
+    for (size_t i = 0; i < sizeof(types) / sizeof(types[0]); i++) ready_type(types[i]);
+}
+
 void piper_init_types(void) {
+    piper_init_types_core();
     PyTypeObject *types[] = {
         &PyBaseObject_Type, &PyType_Type, &_PyNone_Type, &_PyNotImplemented_Type, &PyEllipsis_Type, &PyLong_Type, &PyBool_Type, &PyFloat_Type, &PyComplex_Type,
         &PyUnicode_Type, &PyUnicodeIter_Type, &PyBytes_Type, &PyBytesIter_Type, &PyByteArray_Type, &PyMemoryView_Type, &PyTuple_Type, &PyTupleIter_Type, &PyList_Type, &PyListIter_Type,
@@ -392,10 +418,7 @@ void piper_init_types(void) {
     extern PyTypeObject PyGenericAlias_Type, PyUnion_Type;
     for (size_t i = 0; i < sizeof(types) / sizeof(types[0]); i++) {
         PyTypeObject *t = types[i];
-        if (!t->tp_alloc) t->tp_alloc = PyType_GenericAlloc;
-        if (!t->tp_free) t->tp_free = PyObject_Free;
-        if (!t->tp_getattro && !t->tp_getattr) t->tp_getattro = PyObject_GenericGetAttr;
-        PyType_Ready(t);
+        ready_type(t);
     }
     PyType_Ready(&PyGenericAlias_Type);
     PyType_Ready(&PyUnion_Type);
@@ -403,16 +426,30 @@ void piper_init_types(void) {
     for (size_t i = 0; i < sizeof(types) / sizeof(types[0]); i++) piper_type_add_slot_wrappers(types[i]);
 }
 
-void piper_initialize(void) {
+static void piper_initialize_base(void) {
     if (initialized) return;
     initialized = 1;
     piper_init_int();
-    piper_init_exceptions();
-    piper_init_types();
+    piper_init_exceptions_core();
+    piper_init_types_core();
     extern void piper_type_add_slot_wrappers(PyTypeObject *tp);
     const char *exc_names[] = { "BaseException", "Exception", NULL };
     for (int i = 0; exc_names[i]; i++) piper_type_add_slot_wrappers((PyTypeObject *)piper_exc_type(exc_names[i]));
+    piper_init_builtins_core();
+    piper_init_sys_core(0, NULL);
+    main_module = piper_new_stdlib_module("__main__");
+    PyDict_SetItemString(PyModule_GetDict(main_module), "__builtins__", PyDict_GetItemString(piper_modules_dict(), "builtins"));
+}
+
+void piper_initialize(void) {
+    static int full_initialized;
+    piper_initialize_base();
+    if (full_initialized) return;
+    full_initialized = 1;
+    piper_init_exceptions();
+    piper_init_types();
     piper_init_builtins();
+    piper_init_sys(0, NULL);
     piper_init_math();
     piper_init_time();
     piper_init_errno();
@@ -423,9 +460,6 @@ void piper_initialize(void) {
     piper_init_atexit();
     piper_init_weakref();
     piper_init_platform();
-    piper_init_sys(0, NULL);
-    main_module = piper_new_stdlib_module("__main__");
-    PyDict_SetItemString(PyModule_GetDict(main_module), "__builtins__", PyDict_GetItemString(piper_modules_dict(), "builtins"));
 }
 int Py_IsInitialized(void) { return initialized; }
 void Py_Initialize(void) { piper_initialize(); }
@@ -493,6 +527,14 @@ int piper_main(int argc, char **argv, PyObject *(*module_init)(void)) {
     piper_set_argv(argc, argv);
     int status = piper_run_main_module(module_init);
     for (int i = natexit; i-- > 0;) atexit_funcs[i]();
+    Py_FinalizeEx();
+    return status;
+}
+
+int piper_main_core(int argc, char **argv, PyObject *(*module_init)(void)) {
+    piper_initialize_base();
+    piper_set_argv(argc, argv);
+    int status = piper_run_main_module(module_init);
     Py_FinalizeEx();
     return status;
 }

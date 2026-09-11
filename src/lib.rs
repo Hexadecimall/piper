@@ -228,6 +228,23 @@ fn main_guard(expr: &Expr) -> bool {
             if id == "__name__" && value == "__main__")
 }
 
+fn core_specializable_expr(expr: &Expr) -> bool {
+    match &expr.kind {
+        ExprKind::Constant { .. } => true,
+        ExprKind::Call { func, args, keywords } => {
+            matches!(&func.kind, ExprKind::Name { id, .. } if id == "print" || id == "input")
+                && args.iter().all(core_specializable_expr)
+                && keywords.iter().all(|keyword| keyword.arg.is_some() && core_specializable_expr(&keyword.value))
+        }
+        _ => false,
+    }
+}
+
+fn core_specializable(tree: &Mod) -> bool {
+    let Mod::Module { body, .. } = tree else { return false };
+    !body.is_empty() && body.iter().all(|statement| matches!(&statement.kind, StmtKind::Expr { value } if core_specializable_expr(value)))
+}
+
 fn absolute_import(current: &str, is_package: bool, module: Option<&str>, level: u32) -> Option<String> {
     if level == 0 { return module.map(str::to_string); }
     let package = if is_package { current } else { current.rsplit_once('.').map(|(p, _)| p).unwrap_or("") };
@@ -329,7 +346,7 @@ fn module_object(module: &SourceModule, target: &Target, opt: OptLevel) -> Resul
         if let Ok(object) = std::fs::read(path) { return Ok(object); }
     }
     let mut codegen = lower_parsed(&module.tree, &logical_file, &module.name, lower::ModuleConfig {
-        init_symbol: &symbol, emit_main: false, emit_extension: false, is_package: module.is_package, static_modules: &[],
+        init_symbol: &symbol, emit_main: false, emit_extension: false, is_package: module.is_package, static_modules: &[], specialize_core: false,
     }).map_err(|e| format!("  File \"{logical_file}\", line {}\nSyntaxError: {}", e.lineno, e.msg))?;
     let object = codegen.emit_object(Some(&target.triple), opt).map_err(|e| format!("codegen failed for {}: {e}", module.name))?;
     if let Some(path) = cache {
@@ -361,8 +378,9 @@ pub fn compile_file(input: &Path, output: &Path, opts: &CompileOptions) -> Resul
     let search_root = source_path.parent().unwrap_or_else(|| Path::new("."));
     let modules = discover_modules(search_root, &tree, modname, input.is_dir())?;
     let registry: Vec<(String, String)> = modules.iter().map(|module| (module.name.clone(), init_symbol(&module.name))).collect();
+    let specialize_core = !opts.library && modules.is_empty() && core_specializable(&tree);
     let mut cg = lower_parsed(&tree, &filename, modname, lower::ModuleConfig {
-        init_symbol: "piper_module_init", emit_main: !opts.library, emit_extension: opts.library, is_package: input.is_dir(), static_modules: &registry,
+        init_symbol: "piper_module_init", emit_main: !opts.library, emit_extension: opts.library, is_package: input.is_dir(), static_modules: &registry, specialize_core,
     }).map_err(|e| {
         let line = src.lines().nth(e.lineno.saturating_sub(1) as usize).unwrap_or("");
         format!("  File \"{}\", line {}\n    {}\n    {}^\nSyntaxError: {}", filename, e.lineno, line.trim_end(), " ".repeat(e.col as usize), e.msg)
