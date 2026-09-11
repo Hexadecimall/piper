@@ -202,11 +202,11 @@ fn bundled_introspection_context_and_logging_modules_execute() {
     let _guard = compiler_lock();
     if !piper_llvm::link::AVAILABLE { eprintln!("skipped: no lld"); return; }
     let base = std::env::temp_dir().join(format!("piper-introspection-library-{}", std::process::id()));
-    write(base.join("main.py"), "import ast\nimport contextvars\nimport logging\nimport time\nvalue = contextvars.ContextVar('value', default=3)\ntoken = value.set(9)\nprint(value.get(), contextvars.copy_context()[value])\nvalue.reset(token)\nprint(value.get())\nnode = ast.Constant(value=42)\nprint(isinstance(node, ast.AST), node.value, ast.dump(node))\nprint(hasattr(logging, 'getLogger'), len(time.strftime('%Y', time.gmtime(0))))\n");
+    write(base.join("main.py"), "import ast\nimport contextvars\nimport hashlib\nimport logging\nimport time\nvalue = contextvars.ContextVar('value', default=3)\ntoken = value.set(9)\nprint(value.get(), contextvars.copy_context()[value])\nvalue.reset(token)\nprint(value.get())\nnode = ast.Constant(value=42)\nprint(isinstance(node, ast.AST), node.value, ast.dump(node))\nprint(hasattr(logging, 'getLogger'), len(time.strftime('%Y', time.gmtime(0))))\nprint(hashlib.sha256(b'abc').hexdigest())\nprint(hashlib.sha224(b'abc').hexdigest())\n");
     let executable = base.join("program");
     piper::compile_file(&base.join("main.py"), &executable, &Default::default()).unwrap();
     let output = Command::new(&executable).output().unwrap();
     assert!(output.status.success(), "{}", String::from_utf8_lossy(&output.stderr));
-    assert_eq!(String::from_utf8_lossy(&output.stdout), "9 9\n3\nTrue 42 Constant(value=42)\nTrue 4\n");
+    assert_eq!(String::from_utf8_lossy(&output.stdout), "9 9\n3\nTrue 42 Constant(value=42)\nTrue 4\nba7816bf8f01cfea414140de5dae2223b00361a396177a9cb410ff61f20015ad\n23097d223405d8228642a477bda255b32aadbce4bda0b3f7e36c9da7\n");
     let _ = std::fs::remove_dir_all(base);
 }

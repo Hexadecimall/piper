@@ -60,6 +60,7 @@ pub fn stdlib_source(name: &str) -> Option<(&'static str, bool)> {
         "_collections" => Some((include_str!("../stdlib/_collections.py"), false)),
         "_contextvars" => Some((include_str!("../stdlib/_contextvars.py"), false)),
         "_imp" => Some((include_str!("../stdlib/_imp.py"), false)),
+        "_hashlib" => Some((include_str!("../stdlib/_hashlib.py"), false)),
         "_opcode" => Some((include_str!("../stdlib/_opcode.py"), false)),
         "_csv" => Some((include_str!("../stdlib/_csv.py"), false)),
         "_sre" => Some((include_str!("../stdlib/_sre.py"), false)),
@@ -76,6 +77,7 @@ pub fn stdlib_source(name: &str) -> Option<(&'static str, bool)> {
         "dataclasses" => Some((include_str!("../stdlib/dataclasses.py"), false)),
         "enum" => Some((include_str!("../stdlib/enum.py"), false)),
         "heapq" => Some((include_str!("../stdlib/heapq.py"), false)),
+        "hashlib" => Some((include_str!("../stdlib/hashlib.py"), false)),
         "itertools" => Some((include_str!("../stdlib/itertools.py"), false)),
         "importlib" => Some((include_str!("../stdlib/importlib_init.py"), true)),
         "importlib.machinery" => Some((include_str!("../stdlib/importlib_machinery.py"), false)),
@@ -96,7 +98,7 @@ pub fn stdlib_source(name: &str) -> Option<(&'static str, bool)> {
 /// Number of source modules available in the complete bundled library and
 /// Piper's compatibility layer.
 pub fn stdlib_module_count() -> usize {
-    let compatibility = ["_ast", "_codecs", "_collections", "_contextvars", "_csv", "_imp", "_opcode", "_random", "_sre", "_string", "_struct", "_thread", "_tokenize", "abc", "binascii", "bisect", "collections.abc", "colorsys", "copyreg", "dataclasses", "enum", "heapq", "importlib", "importlib.machinery", "io", "itertools", "keyword", "operator", "re._compiler", "stat", "types"];
+    let compatibility = ["_ast", "_codecs", "_collections", "_contextvars", "_csv", "_hashlib", "_imp", "_opcode", "_random", "_sre", "_string", "_struct", "_thread", "_tokenize", "abc", "binascii", "bisect", "collections.abc", "colorsys", "copyreg", "dataclasses", "enum", "hashlib", "heapq", "importlib", "importlib.machinery", "io", "itertools", "keyword", "operator", "re._compiler", "stat", "types"];
     STDLIB.len() + compatibility.iter().filter(|name| STDLIB.binary_search_by(|asset| asset.name.cmp(name)).is_err()).count()
 }
 
