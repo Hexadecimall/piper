@@ -125,6 +125,20 @@ fn bundled_random_uses_native_entropy() {
 }
 
 #[test]
+fn bundled_io_supports_files_and_memory_streams() {
+    let _guard = compiler_lock();
+    if !piper_llvm::link::AVAILABLE { eprintln!("skipped: no lld"); return; }
+    let base = std::env::temp_dir().join(format!("piper-bundled-io-{}", std::process::id()));
+    write(base.join("main.py"), "import io\nstream = io.StringIO()\nstream.write('piper')\nstream.seek(0)\nprint(stream.read())\nwith io.open('sample.txt', 'w') as file:\n    file.write('disk')\nwith io.open('sample.txt') as file:\n    print(file.read())\n");
+    let executable = base.join("program");
+    piper::compile_file(&base.join("main.py"), &executable, &Default::default()).unwrap();
+    let output = Command::new(&executable).current_dir(&base).output().unwrap();
+    assert!(output.status.success(), "{}", String::from_utf8_lossy(&output.stderr));
+    assert_eq!(String::from_utf8_lossy(&output.stdout), "piper\ndisk\n");
+    let _ = std::fs::remove_dir_all(base);
+}
+
+#[test]
 fn bundled_collections_and_iterators_execute() {
     let _guard = compiler_lock();
     if !piper_llvm::link::AVAILABLE { eprintln!("skipped: no lld"); return; }

@@ -63,6 +63,7 @@ pub fn stdlib_source(name: &str) -> Option<(&'static str, bool)> {
         "enum" => Some((include_str!("../stdlib/enum.py"), false)),
         "heapq" => Some((include_str!("../stdlib/heapq.py"), false)),
         "itertools" => Some((include_str!("../stdlib/itertools.py"), false)),
+        "io" => Some((include_str!("../stdlib/io.py"), false)),
         "keyword" => Some((include_str!("../stdlib/keyword.py"), false)),
         "operator" => Some((include_str!("../stdlib/operator.py"), false)),
         "stat" => Some((include_str!("../stdlib/stat.py"), false)),
@@ -78,7 +79,7 @@ pub fn stdlib_source(name: &str) -> Option<(&'static str, bool)> {
 /// Number of source modules available in the complete bundled library and
 /// Piper's compatibility layer.
 pub fn stdlib_module_count() -> usize {
-    let compatibility = ["_random", "_thread", "abc", "bisect", "colorsys", "copyreg", "enum", "heapq", "itertools", "keyword", "operator", "stat", "types"];
+    let compatibility = ["_random", "_thread", "abc", "bisect", "colorsys", "copyreg", "enum", "heapq", "io", "itertools", "keyword", "operator", "stat", "types"];
     STDLIB.len() + compatibility.iter().filter(|name| STDLIB.binary_search_by(|asset| asset.name.cmp(name)).is_err()).count()
 }
 
