@@ -27,7 +27,7 @@ jobs:
       - uses: actions/checkout@f548e57e544e1ff5a4c46bf1e1b8685f8e4a348a
       - uses: Homebrew/actions/setup-homebrew@3b81d438eda92ee13b5849940d993be027717ecf
       - name: Install build dependencies
-        run: brew install llvm || test -x "$(brew --prefix llvm)/bin/llvm-config"
+        run: brew install llvm
       - name: Build lld libraries
         run: |
           brew fetch --build-from-source lld
@@ -65,6 +65,7 @@ jobs:
           cp "$CARGO_TARGET_DIR/release/piper" "piper-${{ matrix.platform }}-static-release"
           export CARGO_TARGET_DIR="$RUNNER_TEMP/piper-dynamic"
           export PIPER_LLVM_LINK=dynamic
+          export PIPER_LLVM_RUNTIME_DIR="$("$PIPER_LLVM_PREFIX/bin/llvm-config" --libdir)"
           cargo +nightly -Zbuild-std=std,panic_abort build --release --locked
           cp "$CARGO_TARGET_DIR/release/piper" "piper-${{ matrix.platform }}-dynamic-release"
       - name: Verify release binary
