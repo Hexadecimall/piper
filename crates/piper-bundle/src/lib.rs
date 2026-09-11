@@ -75,6 +75,7 @@ pub fn stdlib_source(name: &str) -> Option<(&'static str, bool)> {
         "collections.abc" => Some((include_str!("../stdlib/collections_abc.py"), false)),
         "copyreg" => Some((include_str!("../stdlib/copyreg.py"), false)),
         "dataclasses" => Some((include_str!("../stdlib/dataclasses.py"), false)),
+        "decimal" => Some((include_str!("../stdlib/decimal.py"), false)),
         "enum" => Some((include_str!("../stdlib/enum.py"), false)),
         "heapq" => Some((include_str!("../stdlib/heapq.py"), false)),
         "hashlib" => Some((include_str!("../stdlib/hashlib.py"), false)),
@@ -98,7 +99,7 @@ pub fn stdlib_source(name: &str) -> Option<(&'static str, bool)> {
 /// Number of source modules available in the complete bundled library and
 /// Piper's compatibility layer.
 pub fn stdlib_module_count() -> usize {
-    let compatibility = ["_ast", "_codecs", "_collections", "_contextvars", "_csv", "_hashlib", "_imp", "_opcode", "_random", "_sre", "_string", "_struct", "_thread", "_tokenize", "abc", "binascii", "bisect", "collections.abc", "colorsys", "copyreg", "dataclasses", "enum", "hashlib", "heapq", "importlib", "importlib.machinery", "io", "itertools", "keyword", "operator", "re._compiler", "stat", "types"];
+    let compatibility = ["_ast", "_codecs", "_collections", "_contextvars", "_csv", "_hashlib", "_imp", "_opcode", "_random", "_sre", "_string", "_struct", "_thread", "_tokenize", "abc", "binascii", "bisect", "collections.abc", "colorsys", "copyreg", "dataclasses", "decimal", "enum", "hashlib", "heapq", "importlib", "importlib.machinery", "io", "itertools", "keyword", "operator", "re._compiler", "stat", "types"];
     STDLIB.len() + compatibility.iter().filter(|name| STDLIB.binary_search_by(|asset| asset.name.cmp(name)).is_err()).count()
 }
 

@@ -766,6 +766,12 @@ PyObject *PyImport_ImportModuleLevelObject(PyObject *name, PyObject *globals, Py
         mod = piper_import_hook(absname);
         if (!mod) { if (!PyErr_Occurred()) PyErr_Format(PyExc_ModuleNotFoundError, "No module named '%U'", absname); Py_DECREF(absname); return NULL; }
         Py_DECREF(mod); /* registered in sys.modules by the hook */
+        mod = PyDict_GetItemWithError(modules, absname);
+        if (!mod) {
+            if (!PyErr_Occurred()) PyErr_Format(PyExc_SystemError, "module '%U' was initialized without registration", absname);
+            Py_DECREF(absname);
+            return NULL;
+        }
     }
     Py_INCREF(mod);
     if (!fromlist || fromlist == Py_None || PyObject_IsTrue(fromlist) <= 0) {
