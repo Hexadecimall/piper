@@ -15,6 +15,7 @@ fn global_commands_have_stable_terminal_syntax() {
     let version = piper(&["--version"]);
     assert!(version.status.success());
     assert!(String::from_utf8_lossy(&version.stdout).starts_with("piper "));
+    assert_eq!(piper(&["-v"]).stdout, version.stdout);
 
     let library = piper(&["stdlib"]);
     assert!(library.status.success());

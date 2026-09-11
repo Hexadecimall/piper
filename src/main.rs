@@ -36,7 +36,7 @@ fn main() -> ExitCode {
     let args: Vec<String> = std::env::args().skip(1).collect();
     match args.first().map(String::as_str) {
         Some("help") | Some("--help") | Some("-h") => help(),
-        Some("--version") | Some("-V") => { println!("piper {}", env!("CARGO_PKG_VERSION")); ExitCode::SUCCESS }
+        Some("--version") | Some("-V") | Some("-v") => { println!("piper {}", env!("CARGO_PKG_VERSION")); ExitCode::SUCCESS }
         Some("--dump-ast") | Some("ast") => match args.get(1) { Some(path) => dump_ast(path), None => usage() },
         Some("-c") | Some("eval") => evaluate(&args[1..]),
         Some("compile") => compile(&args[1..]),
