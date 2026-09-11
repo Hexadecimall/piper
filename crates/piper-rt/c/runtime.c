@@ -42,6 +42,18 @@ PyObject *PyEval_GetLocals(void) { return piper_frame_globals(); }
 
 typedef struct { PyObject_HEAD PyObject *filename, *funcname, *globals; int lineno; } frameobject;
 static void frame_dealloc(PyObject *o) { frameobject *f = (frameobject *)o; Py_XDECREF(f->filename); Py_XDECREF(f->funcname); Py_XDECREF(f->globals); PyObject_Free(o); }
+static PyObject *frame_code_positions(PyObject *self, PyObject *unused) {
+    PIPER_UNUSED(self); PIPER_UNUSED(unused);
+    PyObject *position = PyTuple_Pack(4, Py_None, Py_None, Py_None, Py_None);
+    if (!position) return NULL;
+    PyObject *positions = PyTuple_Pack(1, position);
+    Py_DECREF(position);
+    if (!positions) return NULL;
+    PyObject *iterator = PyObject_GetIter(positions);
+    Py_DECREF(positions);
+    return iterator;
+}
+static PyMethodDef frame_code_positions_def = { "co_positions", frame_code_positions, METH_NOARGS, NULL };
 static PyObject *frame_code_get(PyObject *o, void *c) {
     PIPER_UNUSED(c);
     frameobject *f = (frameobject *)o;
@@ -50,6 +62,8 @@ static PyObject *frame_code_get(PyObject *o, void *c) {
     PyDict_SetItemString(d, "co_name", f->funcname);
     PyDict_SetItemString(d, "co_qualname", f->funcname);
     PyObject *one = PyLong_FromLong(f->lineno); PyDict_SetItemString(d, "co_firstlineno", one); Py_DECREF(one);
+    PyObject *positions = PyCFunction_NewEx(&frame_code_positions_def, NULL, NULL);
+    if (positions) { PyDict_SetItemString(d, "co_positions", positions); Py_DECREF(positions); }
     PyObject *bases = PyTuple_Pack(1, (PyObject *)&PyBaseObject_Type);
     PyObject *t = PyType_New3("code", bases, d);
     Py_DECREF(bases); Py_DECREF(d);
@@ -372,9 +386,50 @@ void piper_init_sys(int argc, char **argv) {
     v = PyUnicode_FromString(""); PyDict_SetItemString(d, "prefix", v); PyDict_SetItemString(d, "exec_prefix", v); PyDict_SetItemString(d, "base_prefix", v); PyDict_SetItemString(d, "base_exec_prefix", v); Py_DECREF(v);
     PyObject *fi = PyFloat_GetInfo(); PyDict_SetItemString(d, "float_info", fi); Py_DECREF(fi);
     PyObject *ii = PyLong_GetInfo(); PyDict_SetItemString(d, "int_info", ii); Py_DECREF(ii);
+    PyObject *hash_values = PyDict_New();
+    if (hash_values) {
+        struct { const char *name; long long value; } numbers[] = {
+            { "width", 64 }, { "modulus", 2305843009213693951LL },
+            { "inf", 314159 }, { "nan", 0 }, { "imag", 1000003 },
+            { "hash_bits", 64 }, { "seed_bits", 128 }, { "cutoff", 0 },
+            { NULL, 0 },
+        };
+        for (int i = 0; numbers[i].name; i++) {
+            PyObject *number = PyLong_FromLongLong(numbers[i].value);
+            PyDict_SetItemString(hash_values, numbers[i].name, number);
+            Py_DECREF(number);
+        }
+        PyObject *algorithm = PyUnicode_FromString("siphash13");
+        PyDict_SetItemString(hash_values, "algorithm", algorithm);
+        Py_DECREF(algorithm);
+        PyObject *empty = PyTuple_New(0);
+        PyObject *hash_info = empty ? PyObject_Call((PyObject *)&PySimpleNamespace_Type, empty, hash_values) : NULL;
+        Py_XDECREF(empty);
+        Py_DECREF(hash_values);
+        if (hash_info) { PyDict_SetItemString(d, "hash_info", hash_info); Py_DECREF(hash_info); }
+    }
     v = PyUnicode_FromString("short"); PyDict_SetItemString(d, "float_repr_style", v); Py_DECREF(v);
     PyDict_SetItemString(d, "__excepthook__", PyDict_GetItemString(d, "excepthook"));
-    PyDict_SetItemString(d, "flags", Py_None);
+    PyObject *flag_values = PyDict_New();
+    if (flag_values) {
+        const char *zero_flags[] = { "debug", "inspect", "interactive", "optimize", "dont_write_bytecode", "no_user_site", "no_site", "ignore_environment", "verbose", "bytes_warning", "quiet", "isolated", "dev_mode", "utf8_mode", "warn_default_encoding", "safe_path", "context_aware_warnings", "thread_inherit_context", NULL };
+        for (int i = 0; zero_flags[i]; i++) PyDict_SetItemString(flag_values, zero_flags[i], Py_False);
+        struct { const char *name; long value; } flag_numbers[] = {
+            { "hash_randomization", 1 }, { "int_max_str_digits", 4300 },
+            { "gil", 1 }, { "n_fields", 21 }, { "n_sequence_fields", 18 },
+            { "n_unnamed_fields", 0 }, { NULL, 0 },
+        };
+        for (int i = 0; flag_numbers[i].name; i++) {
+            PyObject *number = PyLong_FromLong(flag_numbers[i].value);
+            PyDict_SetItemString(flag_values, flag_numbers[i].name, number);
+            Py_DECREF(number);
+        }
+        PyObject *empty = PyTuple_New(0);
+        PyObject *flags = empty ? PyObject_Call((PyObject *)&PySimpleNamespace_Type, empty, flag_values) : NULL;
+        Py_XDECREF(empty);
+        Py_DECREF(flag_values);
+        if (flags) { PyDict_SetItemString(d, "flags", flags); Py_DECREF(flags); }
+    }
     v = PyList_New(0); PyDict_SetItemString(d, "warnoptions", v); Py_DECREF(v);
     v = PyDict_New(); PyDict_SetItemString(d, "_xoptions", v); Py_DECREF(v);
     v = PyList_New(0); PyDict_SetItemString(d, "meta_path", v); Py_DECREF(v);

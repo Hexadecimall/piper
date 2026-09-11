@@ -1,6 +1,10 @@
 """Thread primitives used by the bundled library."""
 
 TIMEOUT_MAX = 9223372036.0
+error = RuntimeError
+
+class _local:
+    pass
 
 def get_ident():
     return 1
@@ -64,6 +68,38 @@ class RLock:
     def __exit__(self, exc_type, exc, traceback):
         self.release()
 
+class _ThreadHandle:
+    def __init__(self, ident=None):
+        self.ident = get_ident() if ident is None else ident
+        self._done = False
+
+    def is_done(self):
+        return self._done
+
+    def join(self, timeout=None):
+        return None
+
+    def _set_done(self):
+        self._done = True
+
+def _make_thread_handle(ident):
+    return _ThreadHandle(ident)
+
+def _get_main_thread_ident():
+    return 1
+
+def _is_main_interpreter():
+    return True
+
+def daemon_threads_allowed():
+    return True
+
+def set_name(name):
+    return None
+
+def _shutdown():
+    return None
+
 def allocate_lock():
     return LockType()
 
@@ -81,6 +117,9 @@ def exit():
 exit_thread = exit
 
 def start_new_thread(function, args, kwargs=None):
+    raise RuntimeError("native thread creation is not available")
+
+def start_joinable_thread(function, args=(), kwargs=None, handle=None, daemon=True):
     raise RuntimeError("native thread creation is not available")
 
 start_new = start_new_thread

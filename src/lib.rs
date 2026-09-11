@@ -358,7 +358,7 @@ fn opt_name(opt: OptLevel) -> &'static str {
 fn module_object(module: &SourceModule, target: &Target, opt: OptLevel) -> Result<Vec<u8>, String> {
     let logical_file = if module.is_package { format!("{}/__init__.py", module.name.replace('.', "/")) } else { format!("{}.py", module.name.replace('.', "/")) };
     let symbol = init_symbol(&module.name);
-    let key = cache_hash(&[env!("CARGO_PKG_VERSION").as_bytes(), target.triple.as_bytes(), opt_name(opt).as_bytes(), module.name.as_bytes(), module.source.as_bytes()]);
+    let key = cache_hash(&[env!("CARGO_PKG_VERSION").as_bytes(), include_bytes!("../crates/piper-llvm/src/lower.rs"), target.triple.as_bytes(), opt_name(opt).as_bytes(), module.name.as_bytes(), module.source.as_bytes()]);
     let cache = object_cache_dir().map(|directory| directory.join(format!("{key:016x}.o")));
     if let Some(path) = &cache {
         if let Ok(object) = std::fs::read(path) { return Ok(object); }

@@ -36,7 +36,14 @@ int PyTuple_SetItem(PyObject *t, Py_ssize_t i, PyObject *v) {
 PyObject *PyTuple_FromArray(PyObject *const *items, Py_ssize_t n) {
     PyObject *t = PyTuple_New(n);
     if (!t) return NULL;
-    for (Py_ssize_t i = 0; i < n; i++) PyTuple_SET_ITEM(t, i, Py_NewRef(items[i]));
+    for (Py_ssize_t i = 0; i < n; i++) {
+        if (!items[i]) {
+            Py_DECREF(t);
+            if (!PyErr_Occurred()) PyErr_SetString(PyExc_SystemError, "NULL object while constructing tuple");
+            return NULL;
+        }
+        PyTuple_SET_ITEM(t, i, Py_NewRef(items[i]));
+    }
     return t;
 }
 PyObject *piper_tuple_const(PyObject *const *items, Py_ssize_t n) { return PyTuple_FromArray(items, n); }

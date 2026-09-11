@@ -241,7 +241,15 @@ static PyObject *code_getattr(PyObject *o, PyObject *name) {
     return PyObject_GenericGetAttr(o, name);
 }
 static PyObject *code_repr(PyObject *o) { return PyUnicode_FromFormat("<code object %U at %p>", ((PiperFunctionObject *)((codeobject *)o)->func)->name, o); }
-PyTypeObject PyCode_Type = { PyVarObject_HEAD_INIT(&PyType_Type, 0) .tp_name = "code", .tp_basicsize = sizeof(codeobject), .tp_dealloc = code_dealloc, .tp_repr = code_repr, .tp_getattro = code_getattr };
+static PyObject *code_empty_positions(PyObject *o, PyObject *unused) { PIPER_UNUSED(o); PIPER_UNUSED(unused); PyObject *empty = PyTuple_New(0); if (!empty) return NULL; PyObject *iterator = PyObject_GetIter(empty); Py_DECREF(empty); return iterator; }
+static PyObject *code_replace(PyObject *o, PyObject *args, PyObject *kwargs) { PIPER_UNUSED(args); PIPER_UNUSED(kwargs); return Py_NewRef(o); }
+static PyMethodDef code_methods[] = {
+    { "co_positions", code_empty_positions, METH_NOARGS, NULL },
+    { "co_lines", code_empty_positions, METH_NOARGS, NULL },
+    { "replace", (PyCFunction)(void (*)(void))code_replace, METH_VARARGS | METH_KEYWORDS, NULL },
+    { NULL, NULL, 0, NULL },
+};
+PyTypeObject PyCode_Type = { PyVarObject_HEAD_INIT(&PyType_Type, 0) .tp_name = "code", .tp_basicsize = sizeof(codeobject), .tp_dealloc = code_dealloc, .tp_repr = code_repr, .tp_getattro = code_getattr, .tp_methods = code_methods };
 PyObject *piper_code_for_function(PyObject *f) { codeobject *c = PyObject_New(codeobject, &PyCode_Type); if (!c) return NULL; c->func = Py_NewRef(f); return (PyObject *)c; }
 
 /* ---- accessors for generated code ------------------------------------------ */

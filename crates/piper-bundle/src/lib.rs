@@ -50,25 +50,35 @@ pub fn size_of(target: &str) -> u64 {
 pub fn stdlib_source(name: &str) -> Option<(&'static str, bool)> {
     // These modules are initialized by the runtime. Compiling a source module
     // with the same name would replace its target-specific implementation.
-    if matches!(name, "_abc" | "_types" | "_weakref" | "atexit" | "builtins" | "errno" | "math" | "string" | "string.templatelib" | "sys" | "time" | "typing") {
+    if matches!(name, "_abc" | "_types" | "_weakref" | "atexit" | "builtins" | "errno" | "math" | "string.templatelib" | "sys" | "time" | "typing") {
         return None;
     }
     let compatibility = match name {
         "_random" => Some((include_str!("../stdlib/_random.py"), false)),
+        "_ast" => Some((include_str!("../stdlib/_ast.py"), false)),
         "_codecs" => Some((include_str!("../stdlib/_codecs.py"), false)),
         "_collections" => Some((include_str!("../stdlib/_collections.py"), false)),
+        "_contextvars" => Some((include_str!("../stdlib/_contextvars.py"), false)),
+        "_imp" => Some((include_str!("../stdlib/_imp.py"), false)),
+        "_opcode" => Some((include_str!("../stdlib/_opcode.py"), false)),
         "_csv" => Some((include_str!("../stdlib/_csv.py"), false)),
         "_sre" => Some((include_str!("../stdlib/_sre.py"), false)),
         "_struct" => Some((include_str!("../stdlib/_struct.py"), false)),
+        "_string" => Some((include_str!("../stdlib/_string.py"), false)),
         "_thread" => Some((include_str!("../stdlib/_thread.py"), false)),
+        "_tokenize" => Some((include_str!("../stdlib/_tokenize.py"), false)),
         "abc" => Some((include_str!("../stdlib/abc.py"), false)),
         "bisect" => Some((include_str!("../stdlib/bisect.py"), false)),
         "binascii" => Some((include_str!("../stdlib/binascii.py"), false)),
         "colorsys" => Some((include_str!("../stdlib/colorsys.py"), false)),
+        "collections.abc" => Some((include_str!("../stdlib/collections_abc.py"), false)),
         "copyreg" => Some((include_str!("../stdlib/copyreg.py"), false)),
+        "dataclasses" => Some((include_str!("../stdlib/dataclasses.py"), false)),
         "enum" => Some((include_str!("../stdlib/enum.py"), false)),
         "heapq" => Some((include_str!("../stdlib/heapq.py"), false)),
         "itertools" => Some((include_str!("../stdlib/itertools.py"), false)),
+        "importlib" => Some((include_str!("../stdlib/importlib_init.py"), true)),
+        "importlib.machinery" => Some((include_str!("../stdlib/importlib_machinery.py"), false)),
         "io" => Some((include_str!("../stdlib/io.py"), false)),
         "keyword" => Some((include_str!("../stdlib/keyword.py"), false)),
         "operator" => Some((include_str!("../stdlib/operator.py"), false)),
@@ -86,7 +96,7 @@ pub fn stdlib_source(name: &str) -> Option<(&'static str, bool)> {
 /// Number of source modules available in the complete bundled library and
 /// Piper's compatibility layer.
 pub fn stdlib_module_count() -> usize {
-    let compatibility = ["_codecs", "_collections", "_csv", "_random", "_sre", "_struct", "_thread", "abc", "binascii", "bisect", "colorsys", "copyreg", "enum", "heapq", "io", "itertools", "keyword", "operator", "re._compiler", "stat", "types"];
+    let compatibility = ["_ast", "_codecs", "_collections", "_contextvars", "_csv", "_imp", "_opcode", "_random", "_sre", "_string", "_struct", "_thread", "_tokenize", "abc", "binascii", "bisect", "collections.abc", "colorsys", "copyreg", "dataclasses", "enum", "heapq", "importlib", "importlib.machinery", "io", "itertools", "keyword", "operator", "re._compiler", "stat", "types"];
     STDLIB.len() + compatibility.iter().filter(|name| STDLIB.binary_search_by(|asset| asset.name.cmp(name)).is_err()).count()
 }
 
@@ -119,7 +129,7 @@ pub fn runtime_archive(target: &str) -> Option<PathBuf> {
 /// sees a half-written archive and two compilers can race safely.
 fn ensure(path: &Path, bytes: &[u8]) -> std::io::Result<()> {
     if let Ok(m) = std::fs::metadata(path) {
-        if m.is_file() && m.len() == bytes.len() as u64 { return Ok(()); }
+        if m.is_file() && m.len() == bytes.len() as u64 && std::fs::read(path).is_ok_and(|current| current == bytes) { return Ok(()); }
     }
     let dir = path.parent().expect("asset paths have a parent");
     std::fs::create_dir_all(dir)?;

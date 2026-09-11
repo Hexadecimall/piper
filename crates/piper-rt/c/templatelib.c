@@ -54,6 +54,6 @@ static PyObject *template_convert(PyObject *m, PyObject *const *a, Py_ssize_t n)
 }
 static PyMethodDef methods[] = { { "convert", (PyCFunction)(void (*)(void))template_convert, METH_FASTCALL, NULL }, { NULL, NULL, 0, NULL } };
 void piper_init_templatelib(void) {
-    PyObject *string = piper_new_stdlib_module("string"), *module = piper_new_stdlib_module("string.templatelib"); if (!string || !module) return;
-    PyModule_AddObjectRef(module, "Template", (PyObject *)&PyTemplate_Type); PyModule_AddObjectRef(module, "Interpolation", (PyObject *)&PyInterpolation_Type); PyModule_AddFunctions(module, methods); PyModule_AddObjectRef(string, "templatelib", module);
+    PyObject *module = piper_new_stdlib_module("string.templatelib"); if (!module) return;
+    PyModule_AddObjectRef(module, "Template", (PyObject *)&PyTemplate_Type); PyModule_AddObjectRef(module, "Interpolation", (PyObject *)&PyInterpolation_Type); PyModule_AddFunctions(module, methods);
 }

@@ -383,6 +383,10 @@ PyObject *PyObject_GenericGetAttr(PyObject *o, PyObject *name) {
             return r;
         }
     }
+    if (PyUnicode_EqualToUTF8(name, "__dict__") && _PyObject_GetDictPtr(o)) {
+        Py_XDECREF(descr);
+        return PyObject_GenericGetDict(o, NULL);
+    }
     PyObject **dp = _PyObject_GetDictPtr(o);
     if (dp && *dp) {
         PyObject *r = PyDict_GetItemWithError(*dp, name);
@@ -402,6 +406,7 @@ PyObject *PyObject_GenericGetAttr(PyObject *o, PyObject *name) {
 int PyObject_GenericSetAttr(PyObject *o, PyObject *name, PyObject *v) {
     PyTypeObject *tp = Py_TYPE(o);
     if (!(tp->tp_flags & Py_TPFLAGS_READY) && PyType_Ready(tp) < 0) return -1;
+    if (PyUnicode_EqualToUTF8(name, "__dict__") && _PyObject_GetDictPtr(o)) return PyObject_GenericSetDict(o, v, NULL);
     PyObject *descr = piper_type_lookup(tp, name);
     if (descr) {
         descrsetfunc f = Py_TYPE(descr)->tp_descr_set;

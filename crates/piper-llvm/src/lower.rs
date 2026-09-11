@@ -660,26 +660,24 @@ impl<'a> Lower<'a> {
                 }
             }
             StmtKind::AugAssign { target, op, value } => self.augassign(target, *op, value)?,
-            StmtKind::AnnAssign { target, annotation, value, simple } => {
+            StmtKind::AnnAssign { target, annotation: _, value, simple } => {
                 if let Some(v) = value { let val = self.expr(v)?; self.assign(target, val)?; }
-                if *simple {
+                if *simple && matches!(self.scope().kind, ScopeKind::Module | ScopeKind::Class) {
                     if let ExprKind::Name { id, .. } = &target.kind {
-                        if matches!(self.scope().kind, ScopeKind::Module | ScopeKind::Class) {
-                            // evaluate annotation eagerly into __annotations__ (3.14 would defer; good enough)
-                            let ann = self.expr(annotation)?;
-                            let ns = self.namespace_dict();
-                            let r = self.call("piper_setup_annotations", &[ns]);
-                            self.check_neg(r);
-                            let key = self.name_const("__annotations__");
-                            let annd = self.call("PyObject_GetItem", &[ns, key]);
-                            self.check_null(annd);
-                            let name = self.name_const(id);
-                            let r = self.call("PyObject_SetItem", &[annd, name, ann]);
-                            self.decref(annd); self.decref(ann);
-                            self.check_neg(r);
-                        }
+                        let ns = self.namespace_dict();
+                        let r = self.call("piper_setup_annotations", &[ns]);
+                        self.check_neg(r);
+                        let key = self.name_const("__annotations__");
+                        let annotations = self.call("PyObject_GetItem", &[ns, key]);
+                        self.check_null(annotations);
+                        let name = self.name_const(id);
+                        let none = self.call("piper_none", &[]);
+                        let r = self.call("PyObject_SetItem", &[annotations, name, none]);
+                        self.decref(annotations);
+                        self.check_neg(r);
                     }
-                } else if value.is_none() {
+                }
+                if value.is_none() && !matches!(&target.kind, ExprKind::Name { .. }) {
                     // evaluate the target's subexpressions for side effects
                     match &target.kind {
                         ExprKind::Attribute { value: obj, .. } => { let o = self.expr(obj)?; self.decref(o); }
