@@ -11,6 +11,7 @@ typedef struct {
 
 typedef struct { PyObject_HEAD PyObject *name; PyObject *bound; PyObject *default_value; int kind; } typeparamobject;
 typedef struct { PyObject_HEAD } nodefaultobject;
+typedef struct { PyObject_HEAD PyObject *origin; int kwargs; } paramspeccomponentobject;
 static PyObject *nodefault_repr(PyObject *o) { PIPER_UNUSED(o); return PyUnicode_FromString("typing.NoDefault"); }
 static PyTypeObject PyNoDefault_Type = { PyVarObject_HEAD_INIT(&PyType_Type, 0) .tp_name = "typing._NoDefaultType", .tp_basicsize = sizeof(nodefaultobject), .tp_repr = nodefault_repr, .tp_getattro = PyObject_GenericGetAttr };
 static PyObject PyNoDefault = { { .ob_refcnt_full = _Py_STATIC_IMMORTAL_INITIAL_REFCNT }, &PyNoDefault_Type };
@@ -23,16 +24,34 @@ static PyObject *typeparam_constraints(PyObject *o, void *c) { PIPER_UNUSED(o); 
 static PyObject *typeparam_false(PyObject *o, void *c) { PIPER_UNUSED(o); PIPER_UNUSED(c); Py_RETURN_FALSE; }
 static PyObject *typeparam_infer(PyObject *o, void *c) { PIPER_UNUSED(o); PIPER_UNUSED(c); Py_RETURN_TRUE; }
 static PyObject *typeparam_has_default(PyObject *o, PyObject *unused) { PIPER_UNUSED(unused); Py_RETURN_BOOL(((typeparamobject *)o)->default_value != NULL); }
+static void paramspeccomponent_dealloc(PyObject *o) { Py_XDECREF(((paramspeccomponentobject *)o)->origin); PyObject_Free(o); }
+static PyObject *paramspeccomponent_repr(PyObject *o) { paramspeccomponentobject *part = (paramspeccomponentobject *)o; typeparamobject *origin = (typeparamobject *)part->origin; return PyUnicode_FromFormat("%U.%s", origin->name, part->kwargs ? "kwargs" : "args"); }
+static PyObject *paramspeccomponent_origin(PyObject *o, void *c) { PIPER_UNUSED(c); return Py_NewRef(((paramspeccomponentobject *)o)->origin); }
+static PyGetSetDef paramspeccomponent_getsets[] = { { "__origin__", paramspeccomponent_origin, NULL, NULL, NULL }, { NULL, NULL, NULL, NULL, NULL } };
+static PyTypeObject PyParamSpecArgs_Type = { PyVarObject_HEAD_INIT(&PyType_Type, 0) .tp_name = "typing.ParamSpecArgs", .tp_basicsize = sizeof(paramspeccomponentobject), .tp_dealloc = paramspeccomponent_dealloc, .tp_repr = paramspeccomponent_repr, .tp_getattro = PyObject_GenericGetAttr, .tp_getset = paramspeccomponent_getsets };
+static PyTypeObject PyParamSpecKwargs_Type = { PyVarObject_HEAD_INIT(&PyType_Type, 0) .tp_name = "typing.ParamSpecKwargs", .tp_basicsize = sizeof(paramspeccomponentobject), .tp_dealloc = paramspeccomponent_dealloc, .tp_repr = paramspeccomponent_repr, .tp_getattro = PyObject_GenericGetAttr, .tp_getset = paramspeccomponent_getsets };
+static PyObject *paramspec_component(PyObject *o, int kwargs) { PyTypeObject *type = kwargs ? &PyParamSpecKwargs_Type : &PyParamSpecArgs_Type; paramspeccomponentobject *part = PyObject_New(paramspeccomponentobject, type); if (!part) return NULL; part->origin = Py_NewRef(o); part->kwargs = kwargs; return (PyObject *)part; }
+static PyObject *paramspec_args(PyObject *o, void *c) { PIPER_UNUSED(c); return paramspec_component(o, 0); }
+static PyObject *paramspec_kwargs(PyObject *o, void *c) { PIPER_UNUSED(c); return paramspec_component(o, 1); }
 static PyMethodDef typeparam_methods[] = { { "has_default", typeparam_has_default, METH_NOARGS, NULL }, { NULL, NULL, 0, NULL } };
-static PyGetSetDef typeparam_getsets[] = {
+static PyGetSetDef typevar_getsets[] = {
     { "__name__", typeparam_name, NULL, NULL, NULL }, { "__bound__", typeparam_bound, NULL, NULL, NULL },
     { "__constraints__", typeparam_constraints, NULL, NULL, NULL }, { "__default__", typeparam_default, NULL, NULL, NULL },
     { "__covariant__", typeparam_false, NULL, NULL, NULL }, { "__contravariant__", typeparam_false, NULL, NULL, NULL },
     { "__infer_variance__", typeparam_infer, NULL, NULL, NULL }, { NULL, NULL, NULL, NULL, NULL }
 };
-PyTypeObject PyTypeVar_Type = { PyVarObject_HEAD_INIT(&PyType_Type, 0) .tp_name = "typing.TypeVar", .tp_basicsize = sizeof(typeparamobject), .tp_dealloc = typeparam_dealloc, .tp_repr = typeparam_repr, .tp_getattro = PyObject_GenericGetAttr, .tp_methods = typeparam_methods, .tp_getset = typeparam_getsets };
-PyTypeObject PyParamSpec_Type = { PyVarObject_HEAD_INIT(&PyType_Type, 0) .tp_name = "typing.ParamSpec", .tp_basicsize = sizeof(typeparamobject), .tp_dealloc = typeparam_dealloc, .tp_repr = typeparam_repr, .tp_getattro = PyObject_GenericGetAttr, .tp_methods = typeparam_methods, .tp_getset = typeparam_getsets };
-PyTypeObject PyTypeVarTuple_Type = { PyVarObject_HEAD_INIT(&PyType_Type, 0) .tp_name = "typing.TypeVarTuple", .tp_basicsize = sizeof(typeparamobject), .tp_dealloc = typeparam_dealloc, .tp_repr = typeparam_repr, .tp_getattro = PyObject_GenericGetAttr, .tp_methods = typeparam_methods, .tp_getset = typeparam_getsets };
+static PyGetSetDef paramspec_getsets[] = {
+    { "__name__", typeparam_name, NULL, NULL, NULL }, { "__bound__", typeparam_bound, NULL, NULL, NULL },
+    { "__default__", typeparam_default, NULL, NULL, NULL }, { "__covariant__", typeparam_false, NULL, NULL, NULL },
+    { "__contravariant__", typeparam_false, NULL, NULL, NULL }, { "__infer_variance__", typeparam_infer, NULL, NULL, NULL },
+    { "args", paramspec_args, NULL, NULL, NULL }, { "kwargs", paramspec_kwargs, NULL, NULL, NULL }, { NULL, NULL, NULL, NULL, NULL }
+};
+static PyGetSetDef typevartuple_getsets[] = {
+    { "__name__", typeparam_name, NULL, NULL, NULL }, { "__default__", typeparam_default, NULL, NULL, NULL }, { NULL, NULL, NULL, NULL, NULL }
+};
+PyTypeObject PyTypeVar_Type = { PyVarObject_HEAD_INIT(&PyType_Type, 0) .tp_name = "typing.TypeVar", .tp_basicsize = sizeof(typeparamobject), .tp_dealloc = typeparam_dealloc, .tp_repr = typeparam_repr, .tp_getattro = PyObject_GenericGetAttr, .tp_methods = typeparam_methods, .tp_getset = typevar_getsets };
+PyTypeObject PyParamSpec_Type = { PyVarObject_HEAD_INIT(&PyType_Type, 0) .tp_name = "typing.ParamSpec", .tp_basicsize = sizeof(typeparamobject), .tp_dealloc = typeparam_dealloc, .tp_repr = typeparam_repr, .tp_getattro = PyObject_GenericGetAttr, .tp_methods = typeparam_methods, .tp_getset = paramspec_getsets };
+PyTypeObject PyTypeVarTuple_Type = { PyVarObject_HEAD_INIT(&PyType_Type, 0) .tp_name = "typing.TypeVarTuple", .tp_basicsize = sizeof(typeparamobject), .tp_dealloc = typeparam_dealloc, .tp_repr = typeparam_repr, .tp_getattro = PyObject_GenericGetAttr, .tp_methods = typeparam_methods, .tp_getset = typevartuple_getsets };
 
 PyObject *piper_type_param_new(PyObject *name, int kind, PyObject *bound, PyObject *default_value) {
     PyTypeObject *type = kind == 1 ? &PyParamSpec_Type : kind == 2 ? &PyTypeVarTuple_Type : &PyTypeVar_Type;
@@ -85,6 +104,7 @@ PyObject *piper_type_alias_new(PyObject *name, PyObject *thunk, PyObject *type_p
 
 void piper_init_typealias(void) {
     PyType_Ready(&PyNoDefault_Type);
+    PyType_Ready(&PyParamSpecArgs_Type); PyType_Ready(&PyParamSpecKwargs_Type);
     PyType_Ready(&PyTypeAlias_Type);
     PyType_Ready(&PyTypeVar_Type); PyType_Ready(&PyParamSpec_Type); PyType_Ready(&PyTypeVarTuple_Type);
     PyObject *module = piper_new_stdlib_module("typing");
@@ -95,5 +115,7 @@ void piper_init_typealias(void) {
         PyDict_SetItemString(dict, "ParamSpec", (PyObject *)&PyParamSpec_Type);
         PyDict_SetItemString(dict, "TypeVarTuple", (PyObject *)&PyTypeVarTuple_Type);
         PyDict_SetItemString(dict, "NoDefault", &PyNoDefault);
+        PyDict_SetItemString(dict, "ParamSpecArgs", (PyObject *)&PyParamSpecArgs_Type);
+        PyDict_SetItemString(dict, "ParamSpecKwargs", (PyObject *)&PyParamSpecKwargs_Type);
     }
 }
