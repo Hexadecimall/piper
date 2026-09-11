@@ -208,11 +208,14 @@ PyObject *piper_yield_from_next(PyObject *iterator, PyObject *sent, int started)
     }
     int finished = 0;
     if (!value) {
-        if (!PyErr_ExceptionMatches(PyExc_StopIteration)) return NULL;
-        PyObject *stop = PyErr_GetRaisedException();
-        value = PyObject_GetAttrString(stop, "value");
-        Py_DECREF(stop);
-        if (!value) return NULL;
+        if (!PyErr_Occurred()) value = Py_NewRef(Py_None);
+        else {
+            if (!PyErr_ExceptionMatches(PyExc_StopIteration)) return NULL;
+            PyObject *stop = PyErr_GetRaisedException();
+            value = PyObject_GetAttrString(stop, "value");
+            Py_DECREF(stop);
+            if (!value) return NULL;
+        }
         finished = 1;
     }
     PyObject *flag = PyBool_FromLong(finished);
