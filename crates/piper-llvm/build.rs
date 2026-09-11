@@ -22,6 +22,7 @@ fn main() {
         let lld_prefix = std::env::var("PIPER_LLD_PREFIX").map(PathBuf::from).unwrap_or_else(|_| prefix.clone());
         let lld_lib = lld_prefix.join("lib");
         let llvm_libs = archives(&llvm_lib, "LLVM", "PIPER_LLVM_PREFIX/lib");
+        let polly_libs = archives(&llvm_lib, "Polly", "PIPER_LLVM_PREFIX/lib");
         let lld_libs = archives(&lld_lib, "lld", "PIPER_LLD_PREFIX/lib");
         let has_lld = !lld_libs.is_empty();
         if has_lld {
@@ -46,6 +47,7 @@ fn main() {
             println!("cargo:rustc-link-lib=dylib=LLVM");
         } else {
             for l in &llvm_libs { println!("cargo:rustc-link-lib=static={l}"); }
+            for l in &polly_libs { println!("cargo:rustc-link-lib=static={l}"); }
         }
         if let Ok(libraries) = std::env::var("PIPER_LLVM_SYSTEM_LIBS") {
             for argument in libraries.split_whitespace() {
