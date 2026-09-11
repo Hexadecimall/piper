@@ -56,7 +56,17 @@ fn main() {
                 } else if argument == "-pthread" {
                     println!("cargo:rustc-link-lib=pthread");
                 } else {
-                    panic!("unsupported PIPER_LLVM_SYSTEM_LIBS argument: {argument}");
+                    let path = std::path::Path::new(argument);
+                    let filename = path.file_name().and_then(|value| value.to_str()).unwrap_or("");
+                    let (kind, suffix) = if filename.ends_with(".a") { ("static", ".a") }
+                        else if filename.ends_with(".dylib") { ("dylib", ".dylib") }
+                        else if filename.ends_with(".so") { ("dylib", ".so") }
+                        else { panic!("unsupported PIPER_LLVM_SYSTEM_LIBS argument: {argument}") };
+                    let library = filename.strip_prefix("lib").and_then(|value| value.strip_suffix(suffix))
+                        .unwrap_or_else(|| panic!("invalid native library path: {argument}"));
+                    let directory = path.parent().unwrap_or_else(|| panic!("native library has no parent: {argument}"));
+                    println!("cargo:rustc-link-search=native={}", directory.display());
+                    println!("cargo:rustc-link-lib={kind}={library}");
                 }
             }
         }
