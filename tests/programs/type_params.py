@@ -1,11 +1,14 @@
-type Pair[T] = tuple[T, T]
+from typing import NoDefault
 
 
-def identity[T](value: T) -> T:
+type Pair[T: object = int] = tuple[T, T]
+
+
+def identity[T: int, U = str](value: T) -> T:
     return value
 
 
-class Box[T]:
+class Box[T: object = str]:
     def __init__(self, value: T):
         self.value = value
 
@@ -14,6 +17,11 @@ print(Pair.__name__, Pair.__type_params__)
 print(Pair.__value__)
 print(identity.__type_params__, identity(7))
 print(Box.__type_params__, Box("x").value)
+for parameter in identity.__type_params__:
+    print(parameter.__name__, parameter.__bound__, parameter.__default__, parameter.has_default())
+print(identity.__type_params__[0].__default__ is NoDefault)
+print(Pair.__type_params__[0].__bound__, Pair.__type_params__[0].__default__)
+print(Box.__type_params__[0].__bound__, Box.__type_params__[0].__default__)
 
 try:
     raise ExceptionGroup("group", [ValueError("bad"), TypeError("wrong")])

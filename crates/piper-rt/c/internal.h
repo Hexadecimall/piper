@@ -123,7 +123,7 @@ int piper_async_iteration_done(void);
 PyObject *piper_async_with_enter(PyObject *manager, PyObject **exit);
 PyObject *piper_async_with_exit(PyObject *exit, PyObject *exc);
 PyObject *piper_type_alias_new(PyObject *name, PyObject *thunk, PyObject *type_params);
-PyObject *piper_type_param_new(PyObject *name, int kind);
+PyObject *piper_type_param_new(PyObject *name, int kind, PyObject *bound, PyObject *default_value);
 void piper_init_typealias(void);
 void piper_set_static_importer(void *importer);
 PyObject *piper_static_import_module(void *initializer, const char *fullname);

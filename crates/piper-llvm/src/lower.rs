@@ -180,7 +180,7 @@ const RT: &[(&str, &str, &str)] = &[
     ("piper_exception_group_match", "I", "PPPP"),
     ("piper_exception_group_merge", "P", "PP"),
     ("piper_type_alias_new", "P", "PPP"),
-    ("piper_type_param_new", "P", "PI"),
+    ("piper_type_param_new", "P", "PIPP"),
     ("piper_set_static_importer", "V", "P"),
     ("piper_static_import_module", "P", "PP"),
     ("PyUnicode_EqualToUTF8", "I", "PP"),
@@ -843,22 +843,7 @@ impl<'a> Lower<'a> {
                 }
                 let thunk = self.make_function(&format!("{id}.__value__"), &arguments, std::slice::from_ref(&body), &[], s.span)?;
                 let alias_name = self.name_const(id);
-                let count = self.i64c(type_params.len() as i64);
-                let params = self.call("PyTuple_New", &[count]);
-                self.check_null(params);
-                for (index, parameter) in type_params.iter().enumerate() {
-                    let (parameter_name, kind) = match &parameter.kind {
-                        TypeParamKind::TypeVar { name, .. } => (name, 0),
-                        TypeParamKind::ParamSpec { name, .. } => (name, 1),
-                        TypeParamKind::TypeVarTuple { name, .. } => (name, 2),
-                    };
-                    let name = self.name_const(parameter_name);
-                    let kind = self.i32c(kind);
-                    let object = self.call("piper_type_param_new", &[name, kind]);
-                    self.check_null(object);
-                    let index = self.i64c(index as i64);
-                    self.call("PyTuple_SetItem", &[params, index, object]);
-                }
+                let params = self.type_params_tuple(type_params)?;
                 let alias = self.call("piper_type_alias_new", &[alias_name, thunk, params]);
                 self.decref(thunk); self.decref(params);
                 self.check_null(alias);
@@ -1923,14 +1908,18 @@ impl<'a> Lower<'a> {
         let params = self.call("PyTuple_New", &[count]);
         self.check_null(params);
         for (index, parameter) in type_params.iter().enumerate() {
-            let (parameter_name, kind) = match &parameter.kind {
-                TypeParamKind::TypeVar { name, .. } => (name, 0),
-                TypeParamKind::ParamSpec { name, .. } => (name, 1),
-                TypeParamKind::TypeVarTuple { name, .. } => (name, 2),
+            let (parameter_name, kind, bound_expr, default_expr) = match &parameter.kind {
+                TypeParamKind::TypeVar { name, bound, default_value } => (name, 0, bound.as_deref(), default_value.as_deref()),
+                TypeParamKind::ParamSpec { name, default_value } => (name, 1, None, default_value.as_deref()),
+                TypeParamKind::TypeVarTuple { name, default_value } => (name, 2, None, default_value.as_deref()),
             };
             let name = self.name_const(parameter_name);
             let kind = self.i32c(kind);
-            let object = self.call("piper_type_param_new", &[name, kind]);
+            let bound = match bound_expr { Some(expression) => self.expr(expression)?, None => self.null() };
+            let default_value = match default_expr { Some(expression) => self.expr(expression)?, None => self.null() };
+            let object = self.call("piper_type_param_new", &[name, kind, bound, default_value]);
+            if bound_expr.is_some() { self.decref(bound); }
+            if default_expr.is_some() { self.decref(default_value); }
             self.check_null(object);
             let index = self.i64c(index as i64);
             self.call("PyTuple_SetItem", &[params, index, object]);
