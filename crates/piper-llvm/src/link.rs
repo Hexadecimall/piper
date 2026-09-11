@@ -77,6 +77,8 @@ pub struct LinkRequest {
     pub libs: Vec<String>,
     /// Produce a loadable shared library instead of a process executable.
     pub shared: bool,
+    /// Keep the small public C API needed by loadable Python extensions.
+    pub export_python_api: bool,
 }
 
 /// Link an executable for any supported target.
@@ -93,7 +95,7 @@ pub fn link(req: &LinkRequest) -> Result<(), String> {
             if req.shared { args.push("-dylib".into()); }
             args.push("-dead_strip".into());
             if !req.static_libc || req.shared { args.push("-export_dynamic".into()); }
-            else {
+            else if req.export_python_api {
                 for symbol in ["_PyLong_FromLong", "_PyModule_AddIntConstant", "_PyModule_Create2", "_PyModuleDef_Init"] {
                     args.extend(["-exported_symbol".into(), symbol.into()]);
                 }
@@ -197,5 +199,5 @@ fn missing_sysroot_message(t: &Target) -> String {
 pub fn link_executable(triple: &str, output: &Path, inputs: &[PathBuf], static_libc: bool, libs: &[&str]) -> Result<(), String> {
     let target = Target::parse(triple)?;
     let libs = if libs.is_empty() { target.system_libs().iter().map(|s| s.to_string()).collect() } else { libs.iter().map(|s| s.to_string()).collect() };
-    link(&LinkRequest { target, output: output.to_path_buf(), inputs: inputs.to_vec(), static_libc, sysroot: None, libs, shared: false })
+    link(&LinkRequest { target, output: output.to_path_buf(), inputs: inputs.to_vec(), static_libc, sysroot: None, libs, shared: false, export_python_api: true })
 }

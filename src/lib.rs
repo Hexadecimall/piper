@@ -245,6 +245,24 @@ fn core_specializable(tree: &Mod) -> bool {
     !body.is_empty() && body.iter().all(|statement| matches!(&statement.kind, StmtKind::Expr { value } if core_specializable_expr(value)))
 }
 
+fn native_print_lines(tree: &Mod) -> Option<Vec<String>> {
+    let Mod::Module { body, .. } = tree else { return None };
+    if body.is_empty() { return None; }
+    let mut lines = Vec::with_capacity(body.len());
+    for statement in body {
+        let StmtKind::Expr { value } = &statement.kind else { return None };
+        let ExprKind::Call { func, args, keywords } = &value.kind else { return None };
+        if !keywords.is_empty() || !matches!(&func.kind, ExprKind::Name { id, .. } if id == "print") { return None; }
+        let line = match args.as_slice() {
+            [] => String::new(),
+            [Expr { kind: ExprKind::Constant { value: Constant::Str(value), .. }, .. }] if !value.contains('\0') => value.clone(),
+            _ => return None,
+        };
+        lines.push(line);
+    }
+    Some(lines)
+}
+
 fn absolute_import(current: &str, is_package: bool, module: Option<&str>, level: u32) -> Option<String> {
     if level == 0 { return module.map(str::to_string); }
     let package = if is_package { current } else { current.rsplit_once('.').map(|(p, _)| p).unwrap_or("") };
@@ -378,13 +396,21 @@ pub fn compile_file(input: &Path, output: &Path, opts: &CompileOptions) -> Resul
     let search_root = source_path.parent().unwrap_or_else(|| Path::new("."));
     let modules = discover_modules(search_root, &tree, modname, input.is_dir())?;
     let registry: Vec<(String, String)> = modules.iter().map(|module| (module.name.clone(), init_symbol(&module.name))).collect();
-    let specialize_core = !opts.library && modules.is_empty() && core_specializable(&tree);
-    let mut cg = lower_parsed(&tree, &filename, modname, lower::ModuleConfig {
-        init_symbol: "piper_module_init", emit_main: !opts.library, emit_extension: opts.library, is_package: input.is_dir(), static_modules: &registry, specialize_core,
-    }).map_err(|e| {
-        let line = src.lines().nth(e.lineno.saturating_sub(1) as usize).unwrap_or("");
-        format!("  File \"{}\", line {}\n    {}\n    {}^\nSyntaxError: {}", filename, e.lineno, line.trim_end(), " ".repeat(e.col as usize), e.msg)
-    })?;
+    let native_lines = (!opts.library && modules.is_empty()).then(|| native_print_lines(&tree)).flatten();
+    let native = native_lines.is_some();
+    let mut cg = if let Some(lines) = native_lines {
+        let mut cg = Codegen::new(modname);
+        cg.emit_native_print_program(&lines);
+        cg
+    } else {
+        let specialize_core = !opts.library && modules.is_empty() && core_specializable(&tree);
+        lower_parsed(&tree, &filename, modname, lower::ModuleConfig {
+            init_symbol: "piper_module_init", emit_main: !opts.library, emit_extension: opts.library, is_package: input.is_dir(), static_modules: &registry, specialize_core,
+        }).map_err(|e| {
+            let line = src.lines().nth(e.lineno.saturating_sub(1) as usize).unwrap_or("");
+            format!("  File \"{}\", line {}\n    {}\n    {}^\nSyntaxError: {}", filename, e.lineno, line.trim_end(), " ".repeat(e.col as usize), e.msg)
+        })?
+    };
     if opts.emit_ir {
         cg.verify().map_err(|e| format!("internal error: invalid IR:\n{e}"))?;
         std::fs::write(output, cg.ir()).map_err(|e| e.to_string())?;
@@ -396,7 +422,7 @@ pub fn compile_file(input: &Path, output: &Path, opts: &CompileOptions) -> Resul
         std::fs::write(output, obj).map_err(|e| e.to_string())?;
         return Ok(());
     }
-    let rt = runtime_archive_for(&target, opts.runtime.as_deref())?;
+    let rt = if native { None } else { Some(runtime_archive_for(&target, opts.runtime.as_deref())?) };
     let dir = std::env::temp_dir().join(format!("piper-build-{}-{}", std::process::id(), target.dir_name()));
     std::fs::create_dir_all(&dir).map_err(|e| e.to_string())?;
     let obj_path = dir.join("program.o");
@@ -409,7 +435,7 @@ pub fn compile_file(input: &Path, output: &Path, opts: &CompileOptions) -> Resul
         std::fs::write(&path, module_obj).map_err(|e| e.to_string())?;
         inputs.push(path);
     }
-    inputs.push(rt);
+    if let Some(rt) = rt { inputs.push(rt); }
     let req = link::LinkRequest {
         target: target.clone(),
         output: output.to_path_buf(),
@@ -418,8 +444,34 @@ pub fn compile_file(input: &Path, output: &Path, opts: &CompileOptions) -> Resul
         sysroot: opts.sysroot.clone(),
         libs: target.system_libs().iter().map(|s| s.to_string()).collect(),
         shared: opts.library,
+        export_python_api: !native,
     };
     let r = link::link(&req);
     let _ = std::fs::remove_dir_all(&dir);
     r.map_err(|e| format!("link failed:\n{e}"))
+}
+
+#[cfg(test)]
+mod native_tests {
+    use super::*;
+
+    #[test]
+    fn constant_prints_use_a_runtime_free_module() {
+        let tree = piper_syntax::parse_module("print(\"hello\")\nprint()\n", "native.py").unwrap();
+        let lines = native_print_lines(&tree).unwrap();
+        assert_eq!(lines, ["hello", ""]);
+        let mut codegen = Codegen::new("native");
+        codegen.emit_native_print_program(&lines);
+        codegen.verify().unwrap();
+        let ir = codegen.ir();
+        assert!(ir.contains("declare i32 @puts(ptr)"));
+        assert!(!ir.contains("piper_main"));
+        assert!(!ir.contains("PyObject"));
+    }
+
+    #[test]
+    fn dynamic_print_arguments_keep_python_semantics() {
+        let tree = piper_syntax::parse_module("print(1 + 2)\n", "boxed.py").unwrap();
+        assert!(native_print_lines(&tree).is_none());
+    }
 }

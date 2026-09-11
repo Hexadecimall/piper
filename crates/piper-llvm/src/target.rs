@@ -308,11 +308,23 @@ fn query_path(compiler: &str, flag: &str) -> Option<PathBuf> {
 fn pie_libc_dirs(target: &Target) -> Vec<PathBuf> {
     if target.libc != Libc::Musl { return Vec::new(); }
     if let Ok(v) = std::env::var("PIPER_MUSL_LIBC") { let p = PathBuf::from(v); if p.join("rcrt1.o").exists() { return vec![p]; } }
-    let Ok(out) = std::process::Command::new("rustc").args(["--print", "sysroot"]).output() else { return Vec::new() };
-    if !out.status.success() { return Vec::new(); }
-    let root = PathBuf::from(String::from_utf8_lossy(&out.stdout).trim());
-    let d = root.join(format!("lib/rustlib/{}-unknown-linux-musl/lib/self-contained", target.arch.llvm_name()));
-    if d.join("rcrt1.o").exists() { vec![d] } else { Vec::new() }
+    let mut compilers = vec![PathBuf::from("rustc")];
+    for toolchain in ["nightly", "stable"] {
+        if let Ok(out) = std::process::Command::new("rustup").args(["which", "--toolchain", toolchain, "rustc"]).output() {
+            if out.status.success() {
+                let path = PathBuf::from(String::from_utf8_lossy(&out.stdout).trim());
+                if !path.as_os_str().is_empty() { compilers.push(path); }
+            }
+        }
+    }
+    for compiler in compilers {
+        let Ok(out) = std::process::Command::new(compiler).args(["--print", "sysroot"]).output() else { continue };
+        if !out.status.success() { continue; }
+        let root = PathBuf::from(String::from_utf8_lossy(&out.stdout).trim());
+        let d = root.join(format!("lib/rustlib/{}-unknown-linux-musl/lib/self-contained", target.arch.llvm_name()));
+        if d.join("rcrt1.o").exists() { return vec![d]; }
+    }
+    Vec::new()
 }
 
 /// Names a cross compiler for `target` is conventionally installed under.

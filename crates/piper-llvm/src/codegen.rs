@@ -99,6 +99,40 @@ impl Codegen {
         }
     }
 
+    /// Emit a standalone program whose observable work is a sequence of
+    /// `print()` calls containing constant strings. This deliberately has no
+    /// dependency on the boxed Python runtime.
+    pub fn emit_native_print_program(&mut self, lines: &[String]) {
+        unsafe {
+            let i8t = LLVMInt8TypeInContext(self.ctx);
+            let i32t = LLVMInt32TypeInContext(self.ctx);
+            let ptrt = LLVMPointerTypeInContext(self.ctx, 0);
+            let mut puts_params = [ptrt];
+            let puts_ty = LLVMFunctionType(i32t, puts_params.as_mut_ptr(), 1, 0);
+            let puts_fn = LLVMAddFunction(self.module, c"puts".as_ptr(), puts_ty);
+            let main_ty = LLVMFunctionType(i32t, std::ptr::null_mut(), 0, 0);
+            let main = LLVMAddFunction(self.module, c"main".as_ptr(), main_ty);
+            let entry = LLVMAppendBasicBlockInContext(self.ctx, main, c"entry".as_ptr());
+            LLVMPositionBuilderAtEnd(self.builder, entry);
+            for (index, line) in lines.iter().enumerate() {
+                let mut bytes = line.as_bytes().to_vec();
+                bytes.push(0);
+                let array_ty = LLVMArrayType2(i8t, bytes.len() as u64);
+                let name = cstr(&format!("piper.native.{index}"));
+                let global = LLVMAddGlobal(self.module, array_ty, name.as_ptr());
+                let init = LLVMConstStringInContext2(self.ctx, bytes.as_ptr().cast(), bytes.len(), 1);
+                LLVMSetInitializer(global, init);
+                LLVMSetGlobalConstant(global, 1);
+                LLVMSetLinkage(global, LINKAGE_PRIVATE);
+                LLVMSetUnnamedAddress(global, 1);
+                let pointer = LLVMBuildBitCast(self.builder, global, ptrt, c"text".as_ptr());
+                let mut args = [pointer];
+                LLVMBuildCall2(self.builder, puts_ty, puts_fn, args.as_mut_ptr(), 1, c"".as_ptr());
+            }
+            LLVMBuildRet(self.builder, LLVMConstInt(i32t, 0, 0));
+        }
+    }
+
     /// Add an enum attribute (e.g. `optsize`) to every defined function.
     fn add_function_attribute(&mut self, name: &str) {
         unsafe {
