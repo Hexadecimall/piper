@@ -6,7 +6,7 @@ use std::process::ExitCode;
 
 const USAGE: &str = "usage:
   piper compile FILE.py|PACKAGE_DIR [-o OUT] [options]
-  piper repl
+  piper repl [-o FILE]
   piper eval CODE
   piper ast FILE.py
   piper targets
@@ -40,11 +40,11 @@ fn main() -> ExitCode {
         Some("--dump-ast") | Some("ast") => match args.get(1) { Some(path) => dump_ast(path), None => usage() },
         Some("-c") | Some("eval") => evaluate(&args[1..]),
         Some("compile") => compile(&args[1..]),
-        Some("repl") => ExitCode::from(piper::repl::run() as u8),
+        Some("repl") => repl(&args[1..]),
         Some("targets") => targets(),
         Some("stdlib") => stdlib(),
         Some("--update") | Some("update") => update(&args[1..]),
-        None => ExitCode::from(piper::repl::run() as u8),
+        None => ExitCode::from(piper::repl::run(None) as u8),
         _ => usage(),
     }
 }
@@ -77,6 +77,25 @@ fn fail(message: &str, code: u8) -> ExitCode {
         eprintln!("piper: {message}");
     }
     ExitCode::from(code)
+}
+
+fn repl(args: &[String]) -> ExitCode {
+    let mut output = None;
+    let mut i = 0;
+    while i < args.len() {
+        match args[i].as_str() {
+            "-o" | "--output" => {
+                i += 1;
+                let Some(path) = args.get(i) else { return fail("repl output option needs a path", 2); };
+                output = Some(PathBuf::from(path));
+            }
+            argument if argument.starts_with("--output=") => output = Some(PathBuf::from(&argument[9..])),
+            "--help" | "-h" => { println!("usage: piper repl [-o FILE]"); return ExitCode::SUCCESS; }
+            argument => return fail(&format!("unknown repl option '{argument}'"), 2),
+        }
+        i += 1;
+    }
+    ExitCode::from(piper::repl::run(output.as_deref()) as u8)
 }
 
 fn evaluate(args: &[String]) -> ExitCode {

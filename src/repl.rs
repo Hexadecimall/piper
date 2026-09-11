@@ -1,6 +1,8 @@
 use piper_llvm::Jit;
 use piper_syntax::ast::{Mod, StmtKind};
-use std::io::{self, BufRead, Write};
+use piper_syntax::token::Tok;
+use std::fs::File;
+use std::io::{self, BufRead, IsTerminal, Write};
 use std::path::Path;
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -62,6 +64,85 @@ fn display_source(source: &str) -> String {
     }
 }
 
+const RESET: &str = "\x1b[0m";
+const KEYWORD: &str = "\x1b[38;5;213m";
+const STRING: &str = "\x1b[38;5;114m";
+const NUMBER: &str = "\x1b[38;5;81m";
+const OPERATOR: &str = "\x1b[38;5;220m";
+const COMMENT: &str = "\x1b[3;38;5;244m";
+
+fn is_keyword(name: &str) -> bool {
+    matches!(name, "False" | "None" | "True" | "and" | "as" | "assert" | "async" | "await" |
+        "break" | "case" | "class" | "continue" | "def" | "del" | "elif" | "else" | "except" |
+        "finally" | "for" | "from" | "global" | "if" | "import" | "in" | "is" | "lambda" |
+        "match" | "nonlocal" | "not" | "or" | "pass" | "raise" | "return" | "try" | "type" |
+        "while" | "with" | "yield")
+}
+
+fn token_color(token: &Tok) -> Option<&'static str> {
+    match token {
+        Tok::Name(name) if is_keyword(name) => Some(KEYWORD),
+        Tok::Number(_) => Some(NUMBER),
+        Tok::String(_) | Tok::FStringStart(_) | Tok::FStringMiddle(_) | Tok::FStringEnd(_) |
+            Tok::TStringStart(_) | Tok::TStringMiddle(_) | Tok::TStringEnd(_) => Some(STRING),
+        Tok::Op(_) => Some(OPERATOR),
+        Tok::Comment(_) => Some(COMMENT),
+        _ => None,
+    }
+}
+
+pub fn highlight(source: &str) -> String {
+    let (tokens, _) = piper_syntax::token::tokenize_lenient(source);
+    let mut starts = vec![0usize];
+    for (offset, byte) in source.bytes().enumerate() {
+        if byte == b'\n' { starts.push(offset + 1); }
+    }
+    let mut spans = Vec::new();
+    for token in tokens {
+        let Some(color) = token_color(&token.tok) else { continue };
+        let line = token.start.0.saturating_sub(1) as usize;
+        let end_line = token.end.0.saturating_sub(1) as usize;
+        let Some(&line_start) = starts.get(line) else { continue };
+        let Some(&end_start) = starts.get(end_line) else { continue };
+        let start = line_start + token.start_byte as usize;
+        let end = end_start + token.end_byte as usize;
+        if start < end && end <= source.len() { spans.push((start, end, color)); }
+    }
+    spans.sort_by_key(|span| span.0);
+    let mut rendered = String::with_capacity(source.len() + spans.len() * 16);
+    let mut cursor = 0;
+    for (start, end, color) in spans {
+        if start < cursor { continue; }
+        rendered.push_str(&source[cursor..start]);
+        rendered.push_str(color);
+        rendered.push_str(&source[start..end]);
+        rendered.push_str(RESET);
+        cursor = end;
+    }
+    rendered.push_str(&source[cursor..]);
+    rendered
+}
+
+fn read_line(input: &mut impl BufRead, output: &mut impl Write, prompt: &str, color: bool) -> io::Result<Option<String>> {
+    write!(output, "{prompt}")?;
+    output.flush()?;
+    let mut line = String::new();
+    if input.read_line(&mut line)? == 0 { return Ok(None); }
+    if color {
+        let visible = line.strip_suffix('\n').unwrap_or(&line);
+        write!(output, "\x1b[1A\r\x1b[2K{prompt}{}\n", highlight(visible))?;
+        output.flush()?;
+    }
+    Ok(Some(line))
+}
+
+fn record(file: &mut Option<File>, source: &str) -> io::Result<()> {
+    let Some(file) = file else { return Ok(()); };
+    file.write_all(source.as_bytes())?;
+    if !source.ends_with('\n') { file.write_all(b"\n")?; }
+    file.write_all(b"\n")
+}
+
 pub struct Session {
     modules: Vec<Jit>,
     sequence: usize,
@@ -95,20 +176,24 @@ impl Default for Session {
     fn default() -> Self { Self::new() }
 }
 
-pub fn run() -> i32 {
+pub fn run(record_path: Option<&Path>) -> i32 {
     let stdin = io::stdin();
     let mut input = stdin.lock();
     let mut output = io::stdout();
-    let color = std::env::var_os("NO_COLOR").is_none();
+    let color = output.is_terminal() && std::env::var_os("NO_COLOR").is_none();
     let primary = if color { "\x1b[38;5;81m>>>\x1b[0m " } else { ">>> " };
     let continuation = if color { "\x1b[38;5;244m...\x1b[0m " } else { "... " };
     let mut session = Session::new();
+    let mut recording = match record_path {
+        Some(path) => match File::create(path) {
+            Ok(file) => Some(file),
+            Err(error) => { eprintln!("cannot create '{}': {error}", path.display()); return 1; }
+        },
+        None => None,
+    };
     println!("Piper {} — Python 3.14.7", env!("CARGO_PKG_VERSION"));
     loop {
-        let mut source = String::new();
-        print!("{primary}");
-        let _ = output.flush();
-        if input.read_line(&mut source).unwrap_or(0) == 0 { break; }
+        let Some(mut source) = read_line(&mut input, &mut output, primary, color).unwrap_or(None) else { break; };
         if source.trim().is_empty() { continue; }
         match command(&source) {
             Ok(Some(Command::Help)) => { println!(":help  show commands\n:load PATH  compile and run a file\n:clear  clear the terminal\n:quit  leave Piper"); continue; }
@@ -120,15 +205,15 @@ pub fn run() -> i32 {
         }
         let suite = source.trim_end().ends_with(':');
         while suite || needs_more(&source) {
-            print!("{continuation}");
-            let _ = output.flush();
-            let mut line = String::new();
-            if input.read_line(&mut line).unwrap_or(0) == 0 { break; }
+            let Some(line) = read_line(&mut input, &mut output, continuation, color).unwrap_or(None) else { break; };
             source.push_str(&line);
             if line.trim().is_empty() { break; }
             if !suite && !needs_more(&source) { break; }
         }
-        if let Err(error) = session.execute(&source) { eprintln!("{error}"); }
+        match session.execute(&source) {
+            Ok(_) => if let Err(error) = record(&mut recording, &source) { eprintln!("cannot record REPL input: {error}"); return 1; },
+            Err(error) => eprintln!("{error}"),
+        }
     }
     0
 }
@@ -153,6 +238,14 @@ mod tests {
         assert!(needs_more("values = [1,"));
         assert!(!needs_more("values = [1, 2]"));
         assert!(!needs_more("print('ok')"));
+    }
+
+    #[test]
+    fn syntax_highlighting_distinguishes_python_tokens() {
+        let rendered = highlight("def answer(x): return x + 42 # result");
+        assert!(rendered.contains(&format!("{KEYWORD}def{RESET}")));
+        assert!(rendered.contains(&format!("{NUMBER}42{RESET}")));
+        assert!(rendered.contains(&format!("{COMMENT}# result{RESET}")));
     }
 
     #[test]
