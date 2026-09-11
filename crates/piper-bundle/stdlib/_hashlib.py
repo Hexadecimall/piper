@@ -1,4 +1,4 @@
-algorithms_available = {"sha224", "sha256"}
+algorithms_available = {"sha1", "sha224", "sha256"}
 openssl_md_meth_names = algorithms_available
 
 
@@ -16,6 +16,38 @@ _K256 = (
 
 def _rotate(value, count):
     return ((value >> count) | (value << (32 - count))) & 0xffffffff
+
+
+def _rotate_left(value, count):
+    return ((value << count) | (value >> (32 - count))) & 0xffffffff
+
+
+def _sha1(data):
+    state = [0x67452301, 0xefcdab89, 0x98badcfe, 0x10325476, 0xc3d2e1f0]
+    message = bytearray(data)
+    bit_length = len(message) * 8
+    message.append(0x80)
+    while len(message) % 64 != 56:
+        message.append(0)
+    message.extend(bit_length.to_bytes(8, "big"))
+    for offset in range(0, len(message), 64):
+        words = [int.from_bytes(message[offset + index:offset + index + 4], "big") for index in range(0, 64, 4)]
+        for index in range(16, 80):
+            words.append(_rotate_left(words[index - 3] ^ words[index - 8] ^ words[index - 14] ^ words[index - 16], 1))
+        a, b, c, d, e = state
+        for index in range(80):
+            if index < 20:
+                function, constant = (b & c) | (~b & d), 0x5a827999
+            elif index < 40:
+                function, constant = b ^ c ^ d, 0x6ed9eba1
+            elif index < 60:
+                function, constant = (b & c) | (b & d) | (c & d), 0x8f1bbcdc
+            else:
+                function, constant = b ^ c ^ d, 0xca62c1d6
+            temporary = (_rotate_left(a, 5) + function + e + constant + words[index]) & 0xffffffff
+            e, d, c, b, a = d, c, _rotate_left(b, 30), a, temporary
+        state = [(old + value) & 0xffffffff for old, value in zip(state, (a, b, c, d, e))]
+    return b"".join(value.to_bytes(4, "big") for value in state)
 
 
 def _sha256(data, short=False):
@@ -57,13 +89,15 @@ class HASH:
         self.name = name
         self._data = bytearray()
         self.update(data)
-        self.digest_size = 28 if name == "sha224" else 32
+        self.digest_size = 20 if name == "sha1" else 28 if name == "sha224" else 32
         self.block_size = 64
 
     def update(self, data):
         self._data.extend(data)
 
     def digest(self):
+        if self.name == "sha1":
+            return _sha1(self._data)
         return _sha256(self._data, self.name == "sha224")
 
     def hexdigest(self):
@@ -77,12 +111,18 @@ def openssl_sha224(data=b"", *, usedforsecurity=True):
     return HASH("sha224", data)
 
 
+def openssl_sha1(data=b"", *, usedforsecurity=True):
+    return HASH("sha1", data)
+
+
 def openssl_sha256(data=b"", *, usedforsecurity=True):
     return HASH("sha256", data)
 
 
 def new(name, data=b"", **kwargs):
     normalized = name.lower().replace("-", "")
+    if normalized == "sha1":
+        return openssl_sha1(data, **kwargs)
     if normalized == "sha224":
         return openssl_sha224(data, **kwargs)
     if normalized == "sha256":

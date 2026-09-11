@@ -210,3 +210,17 @@ fn bundled_introspection_context_and_logging_modules_execute() {
     assert_eq!(String::from_utf8_lossy(&output.stdout), "9 9\n3\nTrue 42 Constant(value=42)\nTrue 4\n4.00\n3.60\n0.142857\n2.34\n2.36\n-3 -1.5\n1.23 32\nFalse -12 2 4\nba7816bf8f01cfea414140de5dae2223b00361a396177a9cb410ff61f20015ad\n23097d223405d8228642a477bda255b32aadbce4bda0b3f7e36c9da7\n");
     let _ = std::fs::remove_dir_all(base);
 }
+
+#[test]
+fn bundled_sha1_matches_the_standard_vector() {
+    let _guard = compiler_lock();
+    if !piper_llvm::link::AVAILABLE { eprintln!("skipped: no lld"); return; }
+    let base = std::env::temp_dir().join(format!("piper-sha1-library-{}", std::process::id()));
+    write(base.join("main.py"), "import hashlib\nhash = hashlib.sha1()\nhash.update(b'a')\ncopy = hash.copy()\nhash.update(b'bc')\ncopy.update(b'bc')\nprint(hash.name, hash.digest_size, hash.block_size)\nprint(hash.hexdigest())\nprint(copy.digest().hex())\nprint(hashlib.new('sha-1', b'abc').hexdigest())\n");
+    let executable = base.join("program");
+    piper::compile_file(&base.join("main.py"), &executable, &Default::default()).unwrap();
+    let output = Command::new(&executable).output().unwrap();
+    assert!(output.status.success(), "{}", String::from_utf8_lossy(&output.stderr));
+    assert_eq!(String::from_utf8_lossy(&output.stdout), "sha1 20 64\na9993e364706816aba3e25717850c26c9cd0d89d\na9993e364706816aba3e25717850c26c9cd0d89d\na9993e364706816aba3e25717850c26c9cd0d89d\n");
+    let _ = std::fs::remove_dir_all(base);
+}
