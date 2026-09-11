@@ -212,15 +212,15 @@ fn bundled_introspection_context_and_logging_modules_execute() {
 }
 
 #[test]
-fn bundled_sha1_matches_the_standard_vector() {
+fn bundled_legacy_hashes_match_standard_vectors() {
     let _guard = compiler_lock();
     if !piper_llvm::link::AVAILABLE { eprintln!("skipped: no lld"); return; }
     let base = std::env::temp_dir().join(format!("piper-sha1-library-{}", std::process::id()));
-    write(base.join("main.py"), "import hashlib\nhash = hashlib.sha1()\nhash.update(b'a')\ncopy = hash.copy()\nhash.update(b'bc')\ncopy.update(b'bc')\nprint(hash.name, hash.digest_size, hash.block_size)\nprint(hash.hexdigest())\nprint(copy.digest().hex())\nprint(hashlib.new('sha-1', b'abc').hexdigest())\n");
+    write(base.join("main.py"), "import hashlib\nhash = hashlib.sha1()\nhash.update(b'a')\ncopy = hash.copy()\nhash.update(b'bc')\ncopy.update(b'bc')\nprint(hash.name, hash.digest_size, hash.block_size)\nprint(hash.hexdigest())\nprint(copy.digest().hex())\nprint(hashlib.new('sha-1', b'abc').hexdigest())\nmd5 = hashlib.md5(b'a')\nmd5.update(b'bc')\nprint(md5.name, md5.digest_size, md5.block_size)\nprint(md5.hexdigest())\nprint(hashlib.new('MD5', b'abc', usedforsecurity=False).digest().hex())\n");
     let executable = base.join("program");
     piper::compile_file(&base.join("main.py"), &executable, &Default::default()).unwrap();
     let output = Command::new(&executable).output().unwrap();
     assert!(output.status.success(), "{}", String::from_utf8_lossy(&output.stderr));
-    assert_eq!(String::from_utf8_lossy(&output.stdout), "sha1 20 64\na9993e364706816aba3e25717850c26c9cd0d89d\na9993e364706816aba3e25717850c26c9cd0d89d\na9993e364706816aba3e25717850c26c9cd0d89d\n");
+    assert_eq!(String::from_utf8_lossy(&output.stdout), "sha1 20 64\na9993e364706816aba3e25717850c26c9cd0d89d\na9993e364706816aba3e25717850c26c9cd0d89d\na9993e364706816aba3e25717850c26c9cd0d89d\nmd5 16 64\n900150983cd24fb0d6963f7d28e17f72\n900150983cd24fb0d6963f7d28e17f72\n");
     let _ = std::fs::remove_dir_all(base);
 }

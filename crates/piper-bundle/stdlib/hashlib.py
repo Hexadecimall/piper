@@ -1,9 +1,10 @@
 import _hashlib
 
 
-algorithms_guaranteed = {"sha1", "sha224", "sha256"}
+algorithms_guaranteed = {"md5", "sha1", "sha224", "sha256"}
 algorithms_available = set(_hashlib.algorithms_available)
 
+md5 = _hashlib.openssl_md5
 sha1 = _hashlib.openssl_sha1
 sha224 = _hashlib.openssl_sha224
 sha256 = _hashlib.openssl_sha256
