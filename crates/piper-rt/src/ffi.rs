@@ -11,6 +11,8 @@ pub type Py_ssize_t = isize;
 
 unsafe extern "C" {
     pub fn piper_initialize();
+    pub fn piper_terminal_raw_begin(fd: c_int, storage: *mut c_void, size: usize) -> c_int;
+    pub fn piper_terminal_raw_end(fd: c_int, storage: *mut c_void);
 
     // refcounts
     pub fn Py_IncRef(o: PyObjectRef);

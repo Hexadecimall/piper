@@ -27,6 +27,7 @@ impl Spec {
 }
 
 fn main() {
+    println!("cargo:rerun-if-changed=c");
     let sources = sources();
     for s in &sources { println!("cargo:rerun-if-changed={}", s.display()); }
     println!("cargo:rerun-if-changed=include/piper/object.h");
