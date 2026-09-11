@@ -13,6 +13,7 @@ fn main() {
     println!("cargo:rerun-if-env-changed=PIPER_LLVM_PREFIX");
     println!("cargo:rerun-if-env-changed=PIPER_LLD_PREFIX");
     println!("cargo:rerun-if-env-changed=PIPER_LLVM_LINK");
+    println!("cargo:rerun-if-env-changed=PIPER_LLVM_SYSTEM_LIBS");
     println!("cargo:rerun-if-changed=cxx/lld_shim.cpp");
     println!("cargo::rustc-check-cfg=cfg(piper_has_lld)");
     if let Ok(prefix) = std::env::var("PIPER_LLVM_PREFIX") {
@@ -45,6 +46,11 @@ fn main() {
             println!("cargo:rustc-link-lib=dylib=LLVM");
         } else {
             for l in &llvm_libs { println!("cargo:rustc-link-lib=static={l}"); }
+        }
+        if let Ok(libraries) = std::env::var("PIPER_LLVM_SYSTEM_LIBS") {
+            for argument in libraries.split_whitespace() {
+                println!("cargo:rustc-link-arg={argument}");
+            }
         }
         if cfg!(target_os = "linux") { println!("cargo:rustc-link-arg=-Wl,--end-group"); }
         if cfg!(target_os = "macos") { println!("cargo:rustc-link-lib=c++"); }

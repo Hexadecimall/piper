@@ -43,6 +43,7 @@ jobs:
         run: |
           export PIPER_LLVM_PREFIX="$(brew --prefix llvm)"
           export PIPER_LLD_PREFIX="$(brew --prefix lld)"
+          export PIPER_LLVM_SYSTEM_LIBS="$("$PIPER_LLVM_PREFIX/bin/llvm-config" --system-libs --link-static)"
           export RUSTFLAGS="--remap-path-prefix=$HOME/.rustup=rust --remap-path-prefix=$HOME/.cargo=registry --remap-path-prefix=$GITHUB_WORKSPACE=source"
           cargo +nightly -Zbuild-std=std,panic_abort build --release --locked
           cp target/release/piper "${{ matrix.asset }}"
