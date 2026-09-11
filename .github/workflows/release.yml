@@ -27,7 +27,7 @@ jobs:
       - uses: actions/checkout@f548e57e544e1ff5a4c46bf1e1b8685f8e4a348a
       - uses: Homebrew/actions/setup-homebrew@3b81d438eda92ee13b5849940d993be027717ecf
       - name: Install build dependencies
-        run: brew install llvm
+        run: brew install --force-bottle llvm
       - name: Build lld libraries
         run: |
           brew fetch --build-from-source lld
