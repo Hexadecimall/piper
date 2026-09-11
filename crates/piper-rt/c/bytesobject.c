@@ -554,6 +554,33 @@ static PyObject *bytearray_decode(PyObject *o, PyObject *const *a, Py_ssize_t n,
     Py_DECREF(b);
     return r;
 }
+static PyObject *bytearray_find(PyObject *o, PyObject *const *a, Py_ssize_t n) {
+    if (n < 1) { PyErr_SetString(PyExc_TypeError, "find() takes at least 1 argument"); return NULL; }
+    Py_ssize_t start = n >= 2 ? PyNumber_AsSsize_t(a[1], PyExc_OverflowError) : 0;
+    Py_ssize_t end = n >= 3 ? PyNumber_AsSsize_t(a[2], PyExc_OverflowError) : Py_SIZE(o);
+    if (PyErr_Occurred()) return NULL;
+    if (start < 0) { start += Py_SIZE(o); if (start < 0) start = 0; }
+    if (end < 0) end += Py_SIZE(o);
+    if (end > Py_SIZE(o)) end = Py_SIZE(o);
+    if (end < 0) end = 0;
+    char one;
+    const char *needle;
+    Py_ssize_t needle_len;
+    Py_buffer view;
+    int has_view = 0;
+    if (PyIndex_Check(a[0])) {
+        Py_ssize_t value = PyNumber_AsSsize_t(a[0], NULL);
+        if (value == -1 && PyErr_Occurred()) return NULL;
+        if (value < 0 || value > 255) { PyErr_SetString(PyExc_ValueError, "byte must be in range(0, 256)"); return NULL; }
+        one = (char)value; needle = &one; needle_len = 1;
+    } else {
+        if (PyObject_GetBuffer(a[0], &view, PyBUF_SIMPLE) < 0) return NULL;
+        needle = view.buf; needle_len = view.len; has_view = 1;
+    }
+    Py_ssize_t result = bytes_find_raw(((PyByteArrayObject *)o)->ob_bytes, end, needle, needle_len, start, 1);
+    if (has_view) PyBuffer_Release(&view);
+    return PyLong_FromSsize_t(result);
+}
 static PyObject *bytearray_iconcat(PyObject *o, PyObject *v) { PyObject *r = bytearray_extend(o, v); if (!r) return NULL; Py_DECREF(r); return Py_NewRef(o); }
 static PyObject *bytearray_concat(PyObject *a, PyObject *b) {
     Py_buffer va, vb;
@@ -587,6 +614,7 @@ static PyObject *bytearray_new(PyTypeObject *tp, PyObject *args, PyObject *kwds)
 static PyObject *bytearray_iter(PyObject *o) { PyObject *b = PyBytes_FromStringAndSize(((PyByteArrayObject *)o)->ob_bytes, Py_SIZE(o)); PyObject *it = bytes_iter(b); Py_DECREF(b); return it; }
 static PyMethodDef bytearray_methods[] = {
     { "append", bytearray_append, METH_O, NULL }, { "extend", bytearray_extend, METH_O, NULL },
+    { "find", (PyCFunction)(void (*)(void))bytearray_find, METH_FASTCALL, NULL },
     { "decode", (PyCFunction)(void (*)(void))bytearray_decode, METH_FASTCALL | METH_KEYWORDS, NULL },
     { NULL, NULL, 0, NULL },
 };

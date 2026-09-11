@@ -151,3 +151,34 @@ fn bundled_collections_and_iterators_execute() {
     assert_eq!(String::from_utf8_lossy(&output.stdout), "[('a', 2), ('b', 1), ('c', 1)]\nPoint(x=2, y=3) [1, 2, 3]\n[2, 4, 6] [(1, 2), (2, 4)]\n[('a', 'a'), ('a', 'b'), ('b', 'a'), ('b', 'b')]\n");
     let _ = std::fs::remove_dir_all(base);
 }
+
+#[test]
+fn bundled_json_pathlib_regex_and_codecs_execute() {
+    let _guard = compiler_lock();
+    if !piper_llvm::link::AVAILABLE { eprintln!("skipped: no lld"); return; }
+    let base = std::env::temp_dir().join(format!("piper-bundled-library-wave-{}", std::process::id()));
+    write(base.join("main.py"), "import codecs\nimport io\nimport json\nimport pathlib\nimport re\nfrom collections import defaultdict, deque\nstream = io.StringIO()\nstream.write('piper')\nstream.seek(0)\nprint(stream.read())\nprint(json.dumps({'ready': True}, sort_keys=True))\nprint(pathlib.PurePosixPath('one') / 'two')\nprint(re.findall(r'([a-z]+)-(\\d{2,4})', 'ab-12 cd-3456 ef-1'))\nprint(re.sub(r'(\\w+)-(\\d+)', r'\\2:\\1', 'item-42'))\nprint(re.fullmatch(r'a{2,4}?b', 'aaab').group())\nprint(codecs.decode(codecs.encode('café', 'utf-8'), 'utf-8'))\nqueue = deque([2, 3], maxlen=3)\nqueue.appendleft(1)\nqueue.rotate(1)\ncounts = defaultdict(int)\nfor letter in 'aba':\n    counts[letter] += 1\nprint(queue, counts['a'], counts['missing'])\nprint(type(__import__('os').stat('.')).__name__, __import__('os').stat('.').st_size >= 0)\n");
+    let executable = base.join("program");
+    piper::compile_file(&base.join("main.py"), &executable, &Default::default()).unwrap();
+    let output = Command::new(&executable).current_dir(&base).output().unwrap();
+    assert!(output.status.success(), "{}", String::from_utf8_lossy(&output.stderr));
+    assert_eq!(String::from_utf8_lossy(&output.stdout), "piper\n{\"ready\": true}\none/two\n[('ab', '12'), ('cd', '3456')]\n42:item\naaab\ncafé\ndeque([3, 1, 2], maxlen=3) 2 0\nstat_result True\n");
+    let _ = std::fs::remove_dir_all(base);
+}
+
+#[test]
+fn handled_exceptions_leave_no_stale_context() {
+    let _guard = compiler_lock();
+    if !piper_llvm::link::AVAILABLE { eprintln!("skipped: no lld"); return; }
+    let base = std::env::temp_dir().join(format!("piper-exception-context-{}", std::process::id()));
+    write(base.join("main.py"), "def probe():\n    try:\n        raise IndexError('handled')\n    except IndexError:\n        return 1\nprobe()\nraise RuntimeError('visible')\n");
+    let executable = base.join("program");
+    piper::compile_file(&base.join("main.py"), &executable, &Default::default()).unwrap();
+    let output = Command::new(&executable).output().unwrap();
+    assert!(!output.status.success());
+    let stderr = String::from_utf8_lossy(&output.stderr);
+    assert!(stderr.contains("RuntimeError: visible"), "{stderr}");
+    assert!(!stderr.contains("IndexError: handled"), "{stderr}");
+    assert!(!stderr.contains("During handling"), "{stderr}");
+    let _ = std::fs::remove_dir_all(base);
+}

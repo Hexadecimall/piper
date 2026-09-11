@@ -1,5 +1,6 @@
 /* Native operating-system primitives used by the Python os module. */
 #include "internal.h"
+#include <fcntl.h>
 #include <sys/stat.h>
 
 #ifdef _WIN32
@@ -15,6 +16,38 @@
 #include <unistd.h>
 extern char **environ;
 #endif
+
+static PyObject *stat_field(PyObject *object, void *closure) {
+    return Py_NewRef(PyTuple_GET_ITEM(object, (Py_ssize_t)(intptr_t)closure));
+}
+
+static PyObject *stat_time_ns(PyObject *object, void *closure) {
+    PyObject *seconds = PyTuple_GET_ITEM(object, (Py_ssize_t)(intptr_t)closure);
+    long long value = PyLong_AsLongLong(seconds);
+    if (value == -1 && PyErr_Occurred()) return NULL;
+    return PyLong_FromLongLong(value * 1000000000LL);
+}
+
+#define STAT_FIELD(name, index) { name, stat_field, NULL, NULL, (void *)(intptr_t)(index) }
+#define STAT_NS(name, index) { name, stat_time_ns, NULL, NULL, (void *)(intptr_t)(index) }
+static PyGetSetDef stat_result_getsets[] = {
+    STAT_FIELD("st_mode", 0), STAT_FIELD("st_ino", 1), STAT_FIELD("st_dev", 2),
+    STAT_FIELD("st_nlink", 3), STAT_FIELD("st_uid", 4), STAT_FIELD("st_gid", 5),
+    STAT_FIELD("st_size", 6), STAT_FIELD("st_atime", 7), STAT_FIELD("st_mtime", 8),
+    STAT_FIELD("st_ctime", 9), STAT_NS("st_atime_ns", 7), STAT_NS("st_mtime_ns", 8),
+    STAT_NS("st_ctime_ns", 9), { NULL, NULL, NULL, NULL, NULL }
+};
+#undef STAT_FIELD
+#undef STAT_NS
+
+static PyTypeObject platform_stat_result_type = {
+    PyVarObject_HEAD_INIT(&PyType_Type, 0)
+    .tp_name = "os.stat_result",
+    .tp_basicsize = sizeof(PyTupleObject),
+    .tp_flags = Py_TPFLAGS_BASETYPE,
+    .tp_getset = stat_result_getsets,
+    .tp_base = &PyTuple_Type,
+};
 
 static PyObject *platform_getcwd(PyObject *module, PyObject *unused) {
     PIPER_UNUSED(module); PIPER_UNUSED(unused);
@@ -124,6 +157,7 @@ static PyObject *platform_stat(PyObject *module, PyObject *path) {
     PyTuple_SET_ITEM(result, 7, PyLong_FromLongLong((long long)info.st_atime));
     PyTuple_SET_ITEM(result, 8, PyLong_FromLongLong((long long)info.st_mtime));
     PyTuple_SET_ITEM(result, 9, PyLong_FromLongLong((long long)info.st_ctime));
+    Py_SET_TYPE(result, &platform_stat_result_type);
     return result;
 }
 
@@ -203,10 +237,13 @@ void piper_init_platform(void) {
     PyObject *module = piper_new_stdlib_module("posix");
 #endif
     if (!module) return;
+    if (PyType_Ready(&platform_stat_result_type) < 0) return;
     PyModule_AddFunctions(module, platform_methods);
+    PyModule_AddObjectRef(module, "stat_result", (PyObject *)&platform_stat_result_type);
     PyModule_AddObject(module, "environ", platform_create_environ(module, NULL));
     PyModule_AddObject(module, "_have_functions", PyList_New(0));
-    const char *exports[] = { "environ", "getcwd", "getcwdb", "chdir", "getpid", "cpu_count", "urandom", "stat", "unlink", "remove", "rmdir", "mkdir", "rename", NULL };
+    const char *exports[] = { "environ", "getcwd", "getcwdb", "chdir", "getpid", "cpu_count", "urandom", "stat", "unlink", "remove", "rmdir", "mkdir", "rename",
+        "stat_result", "O_RDONLY", "O_WRONLY", "O_RDWR", "O_CREAT", "O_EXCL", "O_TRUNC", "O_APPEND", NULL };
     PyObject *all = PyList_New(0);
     for (int i = 0; exports[i]; i++) {
         PyObject *name = PyUnicode_FromString(exports[i]);
@@ -217,4 +254,23 @@ void piper_init_platform(void) {
     PyModule_AddIntConstant(module, "R_OK", 4);
     PyModule_AddIntConstant(module, "W_OK", 2);
     PyModule_AddIntConstant(module, "X_OK", 1);
+    PyModule_AddIntConstant(module, "O_RDONLY", O_RDONLY);
+    PyModule_AddIntConstant(module, "O_WRONLY", O_WRONLY);
+    PyModule_AddIntConstant(module, "O_RDWR", O_RDWR);
+    PyModule_AddIntConstant(module, "O_CREAT", O_CREAT);
+    PyModule_AddIntConstant(module, "O_EXCL", O_EXCL);
+    PyModule_AddIntConstant(module, "O_TRUNC", O_TRUNC);
+    PyModule_AddIntConstant(module, "O_APPEND", O_APPEND);
+#ifdef O_NONBLOCK
+    PyModule_AddIntConstant(module, "O_NONBLOCK", O_NONBLOCK);
+    PyObject *nonblock = PyUnicode_FromString("O_NONBLOCK"); PyList_Append(all, nonblock); Py_DECREF(nonblock);
+#endif
+#ifdef O_DIRECTORY
+    PyModule_AddIntConstant(module, "O_DIRECTORY", O_DIRECTORY);
+    PyObject *directory = PyUnicode_FromString("O_DIRECTORY"); PyList_Append(all, directory); Py_DECREF(directory);
+#endif
+#ifdef O_CLOEXEC
+    PyModule_AddIntConstant(module, "O_CLOEXEC", O_CLOEXEC);
+    PyObject *cloexec = PyUnicode_FromString("O_CLOEXEC"); PyList_Append(all, cloexec); Py_DECREF(cloexec);
+#endif
 }

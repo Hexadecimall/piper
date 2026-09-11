@@ -109,6 +109,7 @@ enum Cleanup {
     Finally(Vec<Stmt>),
     With { exit_slot: ValueRef },
     AsyncWith { exit_slot: ValueRef },
+    Except,
 }
 
 pub struct Lower<'a> {
@@ -2586,6 +2587,10 @@ impl<'a> Lower<'a> {
                     let result = self.yield_from_iterator(iterator)?;
                     self.decref(result);
                 }
+                Cleanup::Except => {
+                    let handled = self.call("piper_exc_info_pop", &[]);
+                    self.decref(handled);
+                }
             }
             self.fm().handlers.extend(saved_handlers);
             self.fm().cleanups.extend(saved_cleanups);
@@ -2752,6 +2757,9 @@ impl<'a> Lower<'a> {
             }
             self.position(hbody);
             self.fm().handlers.push(Handler::Block(body_err_bb));
+            let cleanup_height = self.f().handlers.len() - 1;
+            self.fm().cleanup_handler_heights.push(cleanup_height);
+            self.fm().cleanups.push(Cleanup::Except);
             if let Some(name) = &h.name {
                 let e = self.load(exc_slot);
                 self.incref(e);
@@ -2759,6 +2767,8 @@ impl<'a> Lower<'a> {
             }
             self.stmts(&h.body)?;
             self.fm().handlers.pop();
+            self.fm().cleanups.pop();
+            self.fm().cleanup_handler_heights.pop();
             if !self.terminated() {
                 if let Some(name) = &h.name {
                     // `del name` at handler end, ignoring unbound

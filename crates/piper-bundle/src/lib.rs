@@ -55,6 +55,9 @@ pub fn stdlib_source(name: &str) -> Option<(&'static str, bool)> {
     }
     let compatibility = match name {
         "_random" => Some((include_str!("../stdlib/_random.py"), false)),
+        "_codecs" => Some((include_str!("../stdlib/_codecs.py"), false)),
+        "_collections" => Some((include_str!("../stdlib/_collections.py"), false)),
+        "_sre" => Some((include_str!("../stdlib/_sre.py"), false)),
         "_thread" => Some((include_str!("../stdlib/_thread.py"), false)),
         "abc" => Some((include_str!("../stdlib/abc.py"), false)),
         "bisect" => Some((include_str!("../stdlib/bisect.py"), false)),
@@ -66,6 +69,7 @@ pub fn stdlib_source(name: &str) -> Option<(&'static str, bool)> {
         "io" => Some((include_str!("../stdlib/io.py"), false)),
         "keyword" => Some((include_str!("../stdlib/keyword.py"), false)),
         "operator" => Some((include_str!("../stdlib/operator.py"), false)),
+        "re._compiler" => Some((include_str!("../stdlib/re_compiler.py"), false)),
         "stat" => Some((include_str!("../stdlib/stat.py"), false)),
         "types" => Some((include_str!("../stdlib/types.py"), false)),
         _ => None,
@@ -79,7 +83,7 @@ pub fn stdlib_source(name: &str) -> Option<(&'static str, bool)> {
 /// Number of source modules available in the complete bundled library and
 /// Piper's compatibility layer.
 pub fn stdlib_module_count() -> usize {
-    let compatibility = ["_random", "_thread", "abc", "bisect", "colorsys", "copyreg", "enum", "heapq", "io", "itertools", "keyword", "operator", "stat", "types"];
+    let compatibility = ["_codecs", "_collections", "_random", "_sre", "_thread", "abc", "bisect", "colorsys", "copyreg", "enum", "heapq", "io", "itertools", "keyword", "operator", "re._compiler", "stat", "types"];
     STDLIB.len() + compatibility.iter().filter(|name| STDLIB.binary_search_by(|asset| asset.name.cmp(name)).is_err()).count()
 }
 
