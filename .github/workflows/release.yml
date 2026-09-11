@@ -1,0 +1,84 @@
+name: release
+
+on:
+  push:
+    tags:
+      - "v[0-9]+.[0-9]+.[0-9]+"
+
+permissions:
+  contents: write
+
+jobs:
+  build:
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - runner: macos-15
+            asset: piper-aarch64-macos-static-release
+          - runner: macos-15-intel
+            asset: piper-x86_64-macos-static-release
+          - runner: ubuntu-24.04
+            asset: piper-x86_64-linux-static-release
+    runs-on: ${{ matrix.runner }}
+    steps:
+      - uses: actions/checkout@f548e57e544e1ff5a4c46bf1e1b8685f8e4a348a
+      - uses: Homebrew/actions/setup-homebrew@3b81d438eda92ee13b5849940d993be027717ecf
+      - name: Install build dependencies
+        run: brew install llvm lld
+      - name: Install Rust source
+        run: rustup toolchain install nightly --profile minimal --component rust-src
+      - name: Fetch Python 3.14.7 standard library
+        run: |
+          curl --fail --location --silent --show-error \
+            https://www.python.org/ftp/python/3.14.7/Python-3.14.7.tar.xz \
+            --output "$RUNNER_TEMP/python.tar.xz"
+          echo "3b48dac8fb59f62eaa67ac83c1eb12bda1b7a08406dd286e252c11a66be27f81  $RUNNER_TEMP/python.tar.xz" | shasum -a 256 --check
+          mkdir "$RUNNER_TEMP/python"
+          tar -xf "$RUNNER_TEMP/python.tar.xz" --strip-components=1 -C "$RUNNER_TEMP/python"
+      - name: Build static Piper
+        env:
+          PIPER_RELEASE_BASE_URL: https://github.com/${{ github.repository }}/releases/download/${{ github.ref_name }}
+          PIPER_STDLIB: ${{ runner.temp }}/python/Lib
+        run: |
+          export PIPER_LLVM_PREFIX="$(brew --prefix llvm)"
+          export PIPER_LLD_PREFIX="$(brew --prefix lld)"
+          export RUSTFLAGS="--remap-path-prefix=$HOME/.rustup=rust --remap-path-prefix=$HOME/.cargo=registry --remap-path-prefix=$GITHUB_WORKSPACE=source"
+          cargo +nightly -Zbuild-std=std,panic_abort build --release --locked
+          cp target/release/piper "${{ matrix.asset }}"
+      - name: Verify release binary
+        run: |
+          asset="${{ matrix.asset }}"
+          if strings "$asset" | grep -Eiq '/Users/runner|/home/runner|gideoncox|Eclipser9-20|\.rustup/toolchains|\.cargo/registry'; then
+            echo "release binary contains build-machine residue" >&2
+            exit 1
+          fi
+          "./$asset" --version
+          PIPER_CACHE_DIR="$RUNNER_TEMP/piper-cache" "./$asset" compile tests/programs/hello.py -o "$RUNNER_TEMP/hello"
+          "$RUNNER_TEMP/hello"
+      - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a
+        with:
+          name: ${{ matrix.asset }}
+          path: ${{ matrix.asset }}
+          if-no-files-found: error
+
+  publish:
+    needs: build
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/download-artifact@484a0b528fb4d7bd804637ccb632e47a0e638317
+        with:
+          pattern: piper-*-static-release
+          merge-multiple: true
+      - name: Build release manifest
+        run: |
+          version="${GITHUB_REF_NAME#v}"
+          printf '%s\n' "$version" > version.txt
+          sha256sum piper-*-static-release > checksums.txt
+      - uses: softprops/action-gh-release@efb35369e0ad2afab669f228072c1b0d510eae64
+        with:
+          generate_release_notes: true
+          files: |
+            piper-*-static-release
+            checksums.txt
+            version.txt

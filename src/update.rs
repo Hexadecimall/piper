@@ -51,6 +51,9 @@ fn expected_checksum(text: &str, asset: &str) -> Result<[u8; 32], String> {
 }
 
 pub fn run(options: &UpdateOptions) -> Result<String, String> {
+    if option_env!("PIPER_DISABLE_SELF_UPDATE") == Some("1") {
+        return Err("updates for this installation are managed by the package manager".into());
+    }
     let base = release_base()?;
     let asset = asset_name(options.dynamic, options.development);
     let latest = String::from_utf8(curl_bytes(&format!("{base}/version.txt"))?).map_err(|_| "version.txt is not UTF-8")?;
