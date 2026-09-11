@@ -208,16 +208,64 @@ fn redraw(output: &mut impl Write, prompt: &str, value: &str, cursor: usize, col
     output.flush()
 }
 
+fn completion_range(value: &str, cursor: usize) -> (usize, &str) {
+    let start = value[..cursor].char_indices().rev().find(|(_, character)| !character.is_alphanumeric() && *character != '_')
+        .map(|(index, character)| index + character.len_utf8()).unwrap_or(0);
+    (start, &value[start..cursor])
+}
+
+fn completion_candidates(value: &str, cursor: usize, learned: &BTreeSet<String>) -> Vec<String> {
+    let (_, prefix) = completion_range(value, cursor);
+    if prefix.is_empty() { return Vec::new(); }
+    let mut candidates: Vec<String> = COMPLETIONS.iter().copied().chain(learned.iter().map(String::as_str))
+        .filter(|candidate| candidate.starts_with(prefix) && *candidate != prefix)
+        .map(str::to_string).collect();
+    candidates.sort();
+    candidates.dedup();
+    candidates
+}
+
 fn complete(value: &mut String, cursor: &mut usize, learned: &BTreeSet<String>) {
     let start = value[..*cursor].char_indices().rev().find(|(_, character)| !character.is_alphanumeric() && *character != '_')
         .map(|(index, character)| index + character.len_utf8()).unwrap_or(0);
     let prefix = &value[start..*cursor];
     if prefix.is_empty() { return; }
-    let candidate = COMPLETIONS.iter().copied().chain(learned.iter().map(String::as_str))
-        .filter(|candidate| candidate.starts_with(prefix) && *candidate != prefix).min();
-    if let Some(candidate) = candidate {
-        value.replace_range(start..*cursor, candidate);
-        *cursor = start + candidate.len();
+    let candidates = completion_candidates(value, *cursor, learned);
+    if let Some(first) = candidates.first() {
+        let common = candidates.iter().skip(1).fold(first.len(), |length, candidate| {
+            first[..length].bytes().zip(candidate.bytes()).take_while(|(left, right)| left == right).count()
+        });
+        let mut common = common.min(first.len());
+        while !first.is_char_boundary(common) { common -= 1; }
+        if common > prefix.len() {
+            value.replace_range(start..*cursor, &first[..common]);
+            *cursor = start + common;
+        }
+    }
+}
+
+fn show_candidates(output: &mut impl Write, candidates: &[String]) -> io::Result<()> {
+    if candidates.is_empty() { return Ok(()); }
+    write!(output, "\r\n\x1b[38;5;244m{}\x1b[0m\r\n", candidates.join("  "))?;
+    output.flush()
+}
+
+fn reverse_search(output: &mut impl Write, input: &mut impl Read, history: &[String], seed: &str) -> io::Result<Option<String>> {
+    let mut query = seed.to_string();
+    loop {
+        let found = history.iter().rev().find(|entry| entry.contains(&query));
+        write!(output, "\r\x1b[2K\x1b[38;5;213m(reverse-i-search)\x1b[0m `{query}`: {}",
+            found.map(String::as_str).unwrap_or("failing search"))?;
+        output.flush()?;
+        let mut byte = [0u8; 1];
+        if input.read(&mut byte)? == 0 { return Ok(None); }
+        match byte[0] {
+            b'\r' | b'\n' => { write!(output, "\r\x1b[2K")?; return Ok(found.cloned()); }
+            3 | 7 | 27 => { write!(output, "\r\x1b[2K")?; return Ok(None); }
+            8 | 127 => { query.pop(); }
+            first if first >= 32 && first < 0x80 => query.push(first as char),
+            _ => {}
+        }
     }
 }
 
@@ -228,10 +276,13 @@ fn read_interactive_line(input: &mut impl Read, output: &mut impl Write, prompt:
     let mut value = initial.to_string();
     let mut cursor = value.len();
     let mut history_index = history.len();
+    let mut last_was_tab = false;
     redraw(output, prompt, &value, cursor, color)?;
     loop {
         let mut byte = [0u8; 1];
         if input.read(&mut byte)? == 0 { write!(output, "\r\n")?; return Ok(None); }
+        let was_tab = last_was_tab;
+        last_was_tab = byte[0] == b'\t';
         match byte[0] {
             b'\r' | b'\n' => { write!(output, "\r\n")?; output.flush()?; return Ok(Some(value + "\n")); }
             1 => cursor = 0,
@@ -241,9 +292,17 @@ fn read_interactive_line(input: &mut impl Read, output: &mut impl Write, prompt:
             4 if value.is_empty() => { write!(output, "\r\n")?; output.flush()?; return Ok(None); }
             4 => { if cursor < value.len() { let end = next_boundary(&value, cursor); value.replace_range(cursor..end, ""); } }
             8 | 127 => if cursor > 0 { let start = previous_boundary(&value, cursor); value.replace_range(start..cursor, ""); cursor = start; },
-            18 => if let Some(entry) = history.iter().rev().find(|entry| entry.contains(&value)) { value = entry.clone(); cursor = value.len(); },
+            16 => if !history.is_empty() && history_index > 0 { history_index -= 1; value = history[history_index].clone(); cursor = value.len(); },
+            14 => if history_index + 1 < history.len() { history_index += 1; value = history[history_index].clone(); cursor = value.len(); },
+            18 => if let Some(entry) = reverse_search(output, input, history, &value)? { value = entry; cursor = value.len(); },
+            11 => value.truncate(cursor),
+            21 => { value.replace_range(..cursor, ""); cursor = 0; }
             23 => if cursor > 0 { let start = previous_word(&value, cursor); value.replace_range(start..cursor, ""); cursor = start; },
-            b'\t' => complete(&mut value, &mut cursor, learned),
+            b'\t' => {
+                let candidates = completion_candidates(&value, cursor, learned);
+                if was_tab && candidates.len() > 1 { show_candidates(output, &candidates)?; }
+                else { complete(&mut value, &mut cursor, learned); }
+            }
             27 => {
                 let mut first = [0u8; 1];
                 if input.read_exact(&mut first).is_ok() && first[0] == b'[' {
