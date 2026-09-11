@@ -737,15 +737,15 @@ impl<'a> Lower<'a> {
                 self.run_cleanups_for_exit(lp.depth)?;
                 self.br(lp.continue_bb);
             }
-            StmtKind::FunctionDef { name, args, body, decorator_list, .. } | StmtKind::AsyncFunctionDef { name, args, body, decorator_list, .. } => {
+            StmtKind::FunctionDef { name, args, body, decorator_list, type_params, .. } | StmtKind::AsyncFunctionDef { name, args, body, decorator_list, type_params, .. } => {
                 let decos: Vec<ValueRef> = decorator_list.iter().map(|d| self.expr(d)).collect::<LResult<_>>()?;
-                let f = self.make_function(name, args, body, s.span)?;
+                let f = self.make_function(name, args, body, type_params, s.span)?;
                 let f = self.apply_decorators(f, &decos)?;
                 self.store_name(name, f)?;
             }
-            StmtKind::ClassDef { name, bases, keywords, body, decorator_list, .. } => {
+            StmtKind::ClassDef { name, bases, keywords, body, decorator_list, type_params } => {
                 let decos: Vec<ValueRef> = decorator_list.iter().map(|d| self.expr(d)).collect::<LResult<_>>()?;
-                let cls = self.make_class(name, bases, keywords, body, s.span)?;
+                let cls = self.make_class(name, bases, keywords, body, type_params, s.span)?;
                 let cls = self.apply_decorators(cls, &decos)?;
                 self.store_name(name, cls)?;
             }
@@ -841,7 +841,7 @@ impl<'a> Lower<'a> {
                     };
                     arguments.args.push(Arg { arg: parameter_name.clone(), annotation: None, type_comment: None, span: parameter.span });
                 }
-                let thunk = self.make_function(&format!("{id}.__value__"), &arguments, std::slice::from_ref(&body), s.span)?;
+                let thunk = self.make_function(&format!("{id}.__value__"), &arguments, std::slice::from_ref(&body), &[], s.span)?;
                 let alias_name = self.name_const(id);
                 let count = self.i64c(type_params.len() as i64);
                 let params = self.call("PyTuple_New", &[count]);
@@ -1519,7 +1519,7 @@ impl<'a> Lower<'a> {
             }
             ExprKind::Lambda { args, body } => {
                 let body_stmt = Stmt { kind: StmtKind::Return { value: Some(body.clone()) }, span: body.span };
-                self.make_function("<lambda>", args, std::slice::from_ref(&body_stmt), e.span)
+                self.make_function("<lambda>", args, std::slice::from_ref(&body_stmt), &[], e.span)
             }
             ExprKind::NamedExpr { target, value } => {
                 let v = self.expr(value)?;
@@ -1861,7 +1861,7 @@ impl<'a> Lower<'a> {
     }
 
     /// Emit the native function for a scope and return the function object (owned).
-    fn make_function(&mut self, name: &str, args: &Arguments, body: &[Stmt], _span: Span) -> LResult<ValueRef> {
+    fn make_function(&mut self, name: &str, args: &Arguments, body: &[Stmt], type_params: &[TypeParam], _span: Span) -> LResult<ValueRef> {
         // defaults evaluated in the defining scope
         let defaults = if args.defaults.is_empty() { self.null() } else {
             let n = self.i64c(args.defaults.len() as i64);
@@ -1908,7 +1908,34 @@ impl<'a> Lower<'a> {
         if !args.kw_defaults.iter().all(|d| d.is_none()) { self.decref(kwdefaults); }
         if !self.st.scopes[child].freevars.is_empty() { self.decref(closure); }
         self.check_null(f);
+        if !type_params.is_empty() {
+            let params = self.type_params_tuple(type_params)?;
+            let attribute = self.name_const("__type_params__");
+            let result = self.call("PyObject_SetAttr", &[f, attribute, params]);
+            self.decref(params);
+            self.check_neg(result);
+        }
         Ok(f)
+    }
+
+    fn type_params_tuple(&mut self, type_params: &[TypeParam]) -> LResult<ValueRef> {
+        let count = self.i64c(type_params.len() as i64);
+        let params = self.call("PyTuple_New", &[count]);
+        self.check_null(params);
+        for (index, parameter) in type_params.iter().enumerate() {
+            let (parameter_name, kind) = match &parameter.kind {
+                TypeParamKind::TypeVar { name, .. } => (name, 0),
+                TypeParamKind::ParamSpec { name, .. } => (name, 1),
+                TypeParamKind::TypeVarTuple { name, .. } => (name, 2),
+            };
+            let name = self.name_const(parameter_name);
+            let kind = self.i32c(kind);
+            let object = self.call("piper_type_param_new", &[name, kind]);
+            self.check_null(object);
+            let index = self.i64c(index as i64);
+            self.call("PyTuple_SetItem", &[params, index, object]);
+        }
+        Ok(params)
     }
 
     fn qualname_for(&self, name: &str) -> String {
@@ -2197,7 +2224,7 @@ impl<'a> Lower<'a> {
 
     // ---- classes ---------------------------------------------------------------------
 
-    fn make_class(&mut self, name: &str, bases: &[Expr], keywords: &[Keyword], body: &[Stmt], span: Span) -> LResult<ValueRef> {
+    fn make_class(&mut self, name: &str, bases: &[Expr], keywords: &[Keyword], body: &[Stmt], type_params: &[TypeParam], span: Span) -> LResult<ValueRef> {
         let child = self.next_child_scope();
         let closure = self.closure_for(child)?;
         let qualname = self.qualname_for(name);
@@ -2232,6 +2259,13 @@ impl<'a> Lower<'a> {
         self.decref(bodyfn); self.decref(bt);
         if !keywords.is_empty() { self.decref(kw); }
         self.check_null(cls);
+        if !type_params.is_empty() {
+            let params = self.type_params_tuple(type_params)?;
+            let attribute = self.name_const("__type_params__");
+            let result = self.call("PyObject_SetAttr", &[cls, attribute, params]);
+            self.decref(params);
+            self.check_neg(result);
+        }
         Ok(cls)
     }
 
